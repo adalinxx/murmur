@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Murmur</title>
+<meta name="description" content="Short posts no one can take down or sell. No coins needed.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3h-7l-5 4v-4a3 3 0 0 1-3-3z' fill='%230F7B6C'/%3E%3C/svg%3E">
+<style>
+@font-face { font-family: "Schibsted Grotesk"; font-weight: 400 900; font-display: swap; src: url(fonts/schibsted-grotesk-latin.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Schibsted Grotesk"; font-weight: 400 900; font-display: swap; src: url(fonts/schibsted-grotesk-latin-ext.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1E00-1E9F, U+20A0-20AB, U+20AD-20C4, U+2C60-2C7F, U+A720-A7FF; }
+:root {
+  --ink: #15191C; --muted: #5E666D; --line: #E4E7EA; --bg: #FFFFFF; --soft: #F3F5F6;
+  --accent: #0F7B6C; --accent-ink: #0A5A4F; --on-accent: #FFFFFF; --like: #C8325A; --bad: #B42318;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink: #E9EDEF; --muted: #9AA3AA; --line: #2A3035; --bg: #111518; --soft: #1A1F23;
+    --accent: #4FD1BC; --accent-ink: #8AE3D4; --on-accent: #0B1714; --like: #FF7A9C; --bad: #FF8A80;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ink: #E9EDEF; --muted: #9AA3AA; --line: #2A3035; --bg: #111518; --soft: #1A1F23;
+  --accent: #4FD1BC; --accent-ink: #8AE3D4; --on-accent: #0B1714; --like: #FF7A9C; --bad: #FF8A80;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 "Schibsted Grotesk", system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button, input, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, p { margin: 0; }
+.muted { color: var(--muted); }
+.small { font-size: 14px; }
+.mono { font-variant-numeric: tabular-nums; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+[hidden] { display: none !important; }
+
+button { height: 40px; padding: 0 18px; border: 0; border-radius: 999px; background: var(--accent); color: var(--on-accent); font-weight: 700; cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+button[aria-pressed="true"]:not(.act) { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+
+.wrap { max-width: 620px; margin: 0 auto; padding: 0 16px; }
+header { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+header .wrap { display: flex; align-items: center; gap: 12px; height: 60px; }
+.brand { font-weight: 800; font-size: 20px; color: var(--ink); letter-spacing: -0.01em; }
+.brand:hover { text-decoration: none; }
+#find { flex: 1; min-width: 0; }
+#find input { width: 100%; height: 38px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--soft); }
+#find input:focus { background: var(--bg); border-color: var(--accent); outline: none; }
+#you { flex: none; display: flex; }
+.me { display: flex; border-radius: 50%; }
+
+main.wrap { padding-top: 0; padding-bottom: 64px; }
+.status { padding: 24px 0; }
+.status button { margin-top: 12px; }
+.intro { padding: 32px 0 24px; border-bottom: 1px solid var(--line); }
+.intro h1 { font-size: 30px; line-height: 1.15; margin-bottom: 8px; letter-spacing: -0.015em; }
+.intro p { max-width: 32em; margin-bottom: 16px; }
+
+.tabs { display: flex; border-bottom: 1px solid var(--line); }
+.tabs a { flex: 1; text-align: center; padding: 14px 0; color: var(--muted); font-weight: 600; border-bottom: 3px solid transparent; }
+.tabs a:hover { text-decoration: none; background: var(--soft); }
+.tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
+
+.compose { display: flex; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.compose .body { flex: 1; min-width: 0; }
+.compose textarea { width: 100%; border: 0; background: transparent; resize: vertical; font-size: 19px; line-height: 1.35; padding: 6px 0; min-height: 3.2em; }
+.compose textarea:focus { outline: none; }
+.compose-foot { display: flex; justify-content: flex-end; align-items: center; gap: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+.left.over { color: var(--bad); font-weight: 700; }
+
+.posts { list-style: none; margin: 0; padding: 0; }
+.post { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.post .row { display: flex; gap: 12px; }
+.post .body { flex: 1; min-width: 0; }
+.post .meta { display: flex; flex-wrap: wrap; gap: 0 6px; align-items: baseline; }
+.post .meta .name { color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.post .meta .time::before { content: "· "; }
+.post .text { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 2px; }
+.post.focus .text { font-size: 21px; line-height: 1.35; margin-top: 8px; }
+.post.focus .meta .time { flex-basis: 100%; order: 3; margin-top: 8px; }
+.post.focus .meta .time::before { content: ""; }
+.post.leaving { opacity: .4; }
+.pending .post { opacity: .7; }
+.reposted { padding-left: 52px; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; }
+.reposted .name { color: var(--muted); font-weight: 600; }
+.reposted .name strong { font-weight: 600; }
+.replying { margin-top: 1px; }
+.quote { display: block; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 14px; color: var(--ink); }
+.quote:hover { text-decoration: none; background: var(--soft); }
+.quote .text { display: block; margin-top: 4px; }
+.quote .avatar { vertical-align: -4px; }
+.thread .post:not(.focus) { border-bottom: 0; }
+.back { display: inline-flex; align-items: center; min-height: 48px; color: var(--ink); font-weight: 600; }
+
+.actions { display: flex; gap: 4px; margin: 6px 0 0 -10px; max-width: 420px; justify-content: space-between; }
+.act { height: 36px; padding: 0 10px; background: transparent; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; font-weight: 500; font-size: 14px; border-radius: 999px; }
+.act:hover { background: var(--soft); color: var(--accent); }
+.act[data-act="like"]:hover, .act[data-act="like"][aria-pressed="true"] { color: var(--like); }
+.act[data-act="like"][aria-pressed="true"] path { fill: currentColor; }
+.act[data-act="repost"][aria-pressed="true"] { color: var(--accent); }
+.act[data-act="delete"]:hover { color: var(--bad); }
+.act span:empty { display: none; }
+
+.media { display: grid; gap: 2px; margin-top: 10px; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); }
+.media.n2, .media.n3, .media.n4 { grid-template-columns: 1fr 1fr; aspect-ratio: 16 / 9; }
+.media.n3 .pic:first-child { grid-row: span 2; }
+.media.n2 .pic, .media.n3 .pic, .media.n4 .pic { min-height: 0; }
+.pic { all: unset; display: block; cursor: zoom-in; background: var(--soft); min-height: 0; position: relative; }
+.pic:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pic img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.media.n1 .pic img { height: auto; max-height: 520px; object-fit: contain; background: var(--soft); }
+.media.n1 .pic img:not([src]) { aspect-ratio: 16 / 9; }
+.pic.missing::after { content: "Not being served just now"; position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; }
+.quote .media { margin-top: 8px; max-width: 360px; }
+.quote .pic { cursor: inherit; }
+img.full { display: block; max-width: 100%; max-height: calc(100vh - 200px); margin: 0 auto; border-radius: 8px; }
+.alt-text { margin-top: 8px; white-space: pre-wrap; }
+
+.attached { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.attached:empty { display: none; }
+.attached li { display: flex; gap: 10px; align-items: flex-start; padding: 8px; border: 1px solid var(--line); border-radius: 12px; }
+.attached li > img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; flex: none; background: var(--soft); }
+.attached .about { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.attached input { width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); font-size: 14px; }
+.attached .note.bad { color: var(--bad); }
+.small-button { height: 30px; padding: 0 12px; font-size: 13px; align-self: flex-start; }
+.add-media { margin-right: auto; margin-left: -10px; cursor: pointer; }
+.add-media:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.avatar { flex: none; width: var(--size); height: var(--size); border-radius: 50%; overflow: hidden; display: inline-grid; place-items: center; background: var(--soft); }
+.avatar svg { width: 100%; height: 100%; display: block; }
+
+.profile { display: grid; grid-template-columns: auto 1fr; gap: 12px 16px; padding: 24px 0 16px; border-bottom: 1px solid var(--line); }
+.profile .who { min-width: 0; }
+.profile h1 { font-size: 24px; overflow-wrap: anywhere; }
+.profile .bio { margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.profile .counts { display: flex; gap: 16px; margin-top: 8px; }
+.profile-actions { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; }
+
+dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 64px); border: 0; border-radius: 18px; padding: 16px 20px; background: var(--bg); color: var(--ink); box-shadow: 0 12px 48px rgb(0 0 0 / .25); }
+dialog::backdrop { background: rgb(0 0 0 / .4); }
+.dialog-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.dialog-head h2 { font-size: 18px; }
+.quoted-in-dialog .post { border-bottom: 0; }
+.card-form { display: flex; flex-direction: column; gap: 14px; }
+.card-form label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; font-size: 14px; }
+.card-form input, .card-form textarea { font-weight: 400; font-size: 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); }
+.card-form button { align-self: flex-end; }
+
+#toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: calc(100vw - 32px); padding: 12px 18px; border-radius: 12px; background: var(--ink); color: var(--bg); font-size: 15px; z-index: 20; box-shadow: 0 6px 24px rgb(0 0 0 / .2); }
+#toast.bad { background: var(--bad); color: #fff; }
+
+moniker-handle-picker { --moniker-accent: var(--accent); --moniker-ink: var(--ink); --moniker-line: var(--line); --moniker-muted: var(--muted); --moniker-surface: var(--bg); --moniker-accent-ink: var(--on-accent); --moniker-bad: var(--bad); }
+
+@media (max-width: 480px) {
+  .intro h1 { font-size: 25px; }
+  .compose > .avatar, .post .row > a .avatar { --size: 36px !important; }
+  .reposted { padding-left: 48px; }
+}
+h1[tabindex="-1"]:focus { outline: none; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="#/">Murmur</a>
+    <form id="find" role="search">
+      <label class="sr" for="q">Find a @handle or an account</label>
+      <input id="q" name="q" type="search" placeholder="Find @handle" autocomplete="off" spellcheck="false">
+    </form>
+    <div id="you"></div>
+  </div>
+</header>
+<main class="wrap"></main>
+<dialog id="dialog"></dialog>
+<moniker-handle-picker></moniker-handle-picker>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

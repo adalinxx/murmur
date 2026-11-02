@@ -1,0 +1,17 @@
+{
+  "name": "murmur",
+  "version": "0.1.0",
+  "description": "Short posts on Lattice: no server, no coins",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "src",
+    "vendor"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "build:policy": "cd policy && RUSTFLAGS=\"--remap-path-prefix=$HOME=~\" cargo build --release --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/murmur_policy.wasm ../chain/"
+  }
+}
