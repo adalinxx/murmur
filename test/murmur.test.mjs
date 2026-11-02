@@ -188,3 +188,16 @@ test("readers drop posts whose media aren't pictures they show", async () => {
   map.set(`post/${ALICE}/good`, JSON.stringify({ text: "", media: [{ cid: address(1), type: "image/png" }] }));
   assert.deepEqual((await m.postsBy(state, ALICE)).map((p) => p.id), ["good"]);
 });
+
+test("snapshot: every post and like on the chain, in two prefix reads, for ranking", async () => {
+  const { state, ok } = chain();
+  const first = ok(ALICE, m.compose(ALICE, { text: "first" }, at()));
+  const second = ok(BOB, m.compose(BOB, { text: "second" }, at()));
+  ok(CAROL, await m.like(state, CAROL, { author: ALICE, id: first.id }));
+  ok(BOB, await m.repost(state, BOB, { author: ALICE, id: first.id }, at()));
+  const { posts, likes } = await m.snapshot(state);
+  assert.equal(posts.length, 3);
+  assert.ok(posts.some((p) => p.id === second.id && p.text === "second"));
+  assert.ok(posts.some((p) => p.repost?.id === first.id));
+  assert.deepEqual(likes, [{ account: CAROL, author: ALICE, id: first.id }]);
+});

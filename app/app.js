@@ -5,8 +5,9 @@
 // sponsor. Whom you follow is Follows, the graph every Lattice app shares;
 // your @handle is Moniker's, the names every app shows.
 //
-// Routes: #/                     your timeline (or every post, before you connect)
-//         #/everyone             every post
+// Routes: #/                     For you: ranked here, from whom you follow and what they like
+//         #/following            whom you follow, newest first
+//         #/everyone             every post, newest first
 //         #/@<h> or #/<account>  a person: their card, counts and posts
 //         #/<account>/<id>       a post, with the thread around it
 //
@@ -17,7 +18,7 @@
 // `?moniker=`, `?sponsor=` and `?wallet=` to use other nodes, chains,
 // sponsor or Selfhold.
 import * as sdk from "../vendor/lattice-sdk.js";
-import { createMurmur, MAX_MEDIA_BYTES, records as m, StorageRefused, StorageStopped } from "../src/index.mjs";
+import { createMurmur, MAX_MEDIA_BYTES, rank, records as m, StorageRefused, StorageStopped } from "../src/index.mjs";
 import { createFollows } from "../vendor/follows/src/index.mjs";
 import * as followRecords from "../vendor/follows/src/records/follows.mjs";
 import { createMoniker } from "./vendor/moniker-sdk/src/index.mjs";
@@ -103,7 +104,7 @@ async function inner(posts) {
   return found;
 }
 
-async function renderPosts(posts, { focus } = {}) {
+async function renderPosts(posts, { focus, headers } = {}) {
   if (posts.length === 0) return "";
   const nested = await inner(posts);
   await know([...posts.map((p) => p.author), ...[...nested.values()].filter(Boolean).map((p) => p.author), ...posts.flatMap((p) => (p.reply ? [p.reply.author] : []))]);
@@ -115,7 +116,7 @@ async function renderPosts(posts, { focus } = {}) {
         if (!original) return `<li class="post gone">${header}<p class="muted">This post was deleted.</p></li>`;
         return postItem(original, { header, nested });
       }
-      return postItem(post, { nested, focus: focus && post.author === focus.author && post.id === focus.id });
+      return postItem(post, { nested, header: headers?.get(`${post.author}/${post.id}`) ?? "", focus: focus && post.author === focus.author && post.id === focus.id });
     }),
   );
   return items.join("");
@@ -145,7 +146,7 @@ async function postItem(post, { header = "", nested, focus = false }) {
           <button class="act" data-act="repost" aria-label="Repost" aria-pressed="false">${icon("repost")}<span data-n="reposts"></span></button>
           <button class="act" data-act="quote" aria-label="Quote">${icon("quote")}<span data-n="quotes"></span></button>
           <button class="act" data-act="like" aria-label="Like" aria-pressed="false">${icon("like")}<span data-n="likes"></span></button>
-          ${mine ? `<button class="act" data-act="delete" aria-label="Delete">${icon("delete")}</button>` : ""}
+          ${mine ? `<button class="act" data-act="delete" aria-label="Delete">${icon("delete")}</button>` : `<button class="act" data-act="more" aria-label="More: not interested, mute">${icon("more")}</button>`}
         </div>
       </div>
     </div>
@@ -212,6 +213,8 @@ const ICONS = {
   like: '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
   delete: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
 };
+ICONS.more = '<circle cx="6" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="18" cy="12" r="1.6" fill="currentColor"/>';
+ICONS.spark = '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>';
 const icon = (name) => `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">${ICONS[name]}</svg>`;
 
 // ---------------------------------------------------------------- views
@@ -239,7 +242,9 @@ async function render() {
   };
   main.setAttribute("aria-busy", "true");
   try {
-    if (route.view === "home" || route.view === "everyone") await home(draw, route.view === "everyone" || !me);
+    if (route.view === "home") await home(draw, "foryou");
+    else if (route.view === "following") await home(draw, me ? "following" : "foryou");
+    else if (route.view === "everyone") await home(draw, "everyone");
     else if (route.view === "person") await person(draw, route.who);
     else if (route.view === "post") await postPage(draw, route);
     else draw(`<p class="status">Nothing is here. <a href="#/">Go home</a>.</p>`);
@@ -392,28 +397,145 @@ async function keepPicture(key, item) {
   redrawAttached(key);
 }
 
-async function home(draw, everyone) {
-  const tabs = me
-    ? `<nav class="tabs" aria-label="Timelines"><a href="#/" ${everyone ? "" : 'aria-current="page"'}>Following</a><a href="#/everyone" ${everyone ? 'aria-current="page"' : ""}>Everyone</a></nav>`
-    : "";
+async function home(draw, view) {
+  const tab = (href, label, v) => `<a href="${href}" ${view === v ? 'aria-current="page"' : ""}>${label}</a>`;
+  const tabs = `<nav class="tabs" aria-label="Timelines">${tab("#/", "For you", "foryou")}${me ? tab("#/following", "Following", "following") : ""}${tab("#/everyone", "Everyone", "everyone")}</nav>`;
   // Made at each draw, so a draft typed while the timeline loads is kept.
   const intro = () => me
     ? composer("home")
     : `<section class="intro"><h1 tabindex="-1">Say it on Murmur.</h1><p class="muted">Short posts no one can take down or sell. Nothing to install and no coins needed: your device does a moment of work for each post.</p><button data-act="connect">Connect with Selfhold</button></section>`;
-  draw(`${intro()}${tabs}${pendingList()}<p class="status muted">Reading…</p>`);
+  const top = () => `${intro()}${tabs}${pendingList()}`;
+  draw(`${top()}<p class="status muted">Reading…</p>`);
+  if (view === "foryou") return forYouPage(draw, top);
+  const muted = mutedSet();
   let posts;
-  if (everyone) {
+  let following = [];
+  if (view === "everyone") {
     posts = await murmur.everyone({ limit: 100 });
   } else {
-    const following = await graph.followingAccounts(me).catch(() => []);
+    following = await graph.followingAccounts(me).catch(() => []);
     posts = await murmur.feed([me, ...following], { limit: 100 });
-    if (following.length === 0) {
-      const html = await renderPosts(posts);
-      return draw(`${intro()}${tabs}${pendingList()}<p class="status muted">You follow nobody yet. Find people on <a href="#/everyone">Everyone</a>, then follow them from their page.</p><ul class="posts">${html}</ul>`);
-    }
   }
-  const html = await renderPosts(posts);
-  draw(`${intro()}${tabs}${pendingList()}${html ? `<ul class="posts">${html}</ul>` : `<p class="status muted">No posts yet. Be the first.</p>`}`);
+  const html = await renderPosts(posts.filter((p) => !muted.has(p.author)));
+  if (view === "following" && following.length === 0) {
+    return draw(`${top()}<p class="status muted">You follow nobody yet. Find people on <a href="#/">For you</a> or <a href="#/everyone">Everyone</a>, then follow them from their page.</p><ul class="posts">${html}</ul>`);
+  }
+  draw(`${top()}${html ? `<ul class="posts">${html}</ul>` : `<p class="status muted">No posts yet. Be the first.</p>`}`);
+}
+
+// ---------------------------------------------------------------- For you
+
+// What you tell Murmur about your feed stays on this device: posts you've
+// seen, posts you're not interested in, and whom you've muted. Nothing of it
+// is written to the chain or sent anywhere.
+const SEEN_DAYS = 30;
+const feedback = {
+  key: () => `murmur:feedback:${me ?? "anyone"}`,
+  load() {
+    try {
+      const v = JSON.parse(localStorage.getItem(this.key()) ?? "{}");
+      return { seen: v.seen ?? {}, hidden: v.hidden ?? {}, muted: v.muted ?? {}, notInterested: v.notInterested ?? {} };
+    } catch {
+      return { seen: {}, hidden: {}, muted: {}, notInterested: {} };
+    }
+  },
+  update(change) {
+    const v = this.load();
+    change(v);
+    const old = Date.now() - SEEN_DAYS * 86_400_000;
+    v.seen = Object.fromEntries(Object.entries(v.seen).filter(([, t]) => t > old).sort((a, b) => b[1] - a[1]).slice(0, 3000));
+    try {
+      localStorage.setItem(this.key(), JSON.stringify(v));
+    } catch {}
+  },
+};
+const mutedSet = () => new Set(Object.keys(feedback.load().muted));
+// What earlier visits showed, read once a visit, so this visit's order holds still.
+let seenBefore = null;
+
+/** Every follow on Follows, account to account: a follow of a @handle counts for the account that shows it now. */
+async function followEdges() {
+  const state = await graph.state();
+  const rows = [];
+  for await (const [key] of state.list("follows/")) {
+    const [a, t] = key.slice("follows/".length).split("/");
+    if (followRecords.isAddress(a) && t) rows.push([a, t]);
+  }
+  const handles = [...new Set(rows.filter(([, t]) => t.startsWith("@")).map(([, t]) => t.slice(1)))];
+  const accounts = await followRecords.accountsOf(names, handles).catch(() => handles.map(() => undefined));
+  const of = new Map(handles.map((h, i) => [h, accounts[i]]));
+  return rows.flatMap(([a, t]) => {
+    const to = t.startsWith("@") ? of.get(t.slice(1)) : t;
+    return to && followRecords.isAddress(to) ? [[a, to]] : [];
+  });
+}
+
+async function forYouPage(draw, top) {
+  const [snapshot, follows] = await Promise.all([murmur.snapshot(), followEdges().catch(() => [])]);
+  const g = rank.index({ ...snapshot, follows });
+  const saved = feedback.load();
+  seenBefore ??= new Set(Object.keys(saved.seen));
+  const { items, suggestions } = rank.forYou(g, me, {
+    local: {
+      seen: seenBefore,
+      hidden: new Set(Object.keys(saved.hidden)),
+      muted: new Set(Object.keys(saved.muted)),
+      notInterested: new Map(Object.entries(saved.notInterested)),
+    },
+  });
+  const now = Date.now();
+  feedback.update((v) => items.forEach((i) => (v.seen[i.key] ??= now)));
+  const cold = !me || !g.followsOf.get(me)?.size;
+  const hint = cold && me ? `<p class="status muted small">These are popular on Murmur. Follow people and For you becomes yours: what they post, and what they like.</p>` : "";
+  const suggest = await suggestionsHTML(suggestions);
+  if (!items.length) return draw(`${top()}${hint}<p class="status muted">Nothing here yet. Be the first to post.</p>${suggest}`);
+  await know(items.flatMap((i) => [i.post.author, ...(i.why?.actors?.slice(0, 1) ?? [])]));
+  const headers = new Map(await Promise.all(items.map(async (i) => [i.key, await whyHTML(i)])));
+  const fresh = items.filter((i) => !i.seen).map((i) => i.post);
+  const old = items.filter((i) => i.seen).map((i) => i.post);
+  const [first, rest, seen] = await Promise.all([renderPosts(fresh.slice(0, 3), { headers }), renderPosts(fresh.slice(3), { headers }), renderPosts(old, { headers })]);
+  draw(`${top()}${hint}
+    ${first ? `<ul class="posts">${first}</ul>` : ""}
+    ${suggest}
+    ${rest ? `<ul class="posts">${rest}</ul>` : ""}
+    ${seen ? `<p class="caught-up muted small">${fresh.length ? "You're caught up. Seen before:" : "Nothing new since you last looked. Seen before:"}</p><ul class="posts">${seen}</ul>` : ""}`);
+}
+
+/** A person's name as a link, for a line of text. */
+async function nameLink(account) {
+  const [handle, card] = await Promise.all([handleOf(account), cardOf(account)]);
+  const name = card?.name?.replace(/[@＠﹫]/g, "") ?? (handle ? `@${handle}` : shortAccount(account));
+  return `<a class="name" href="${personPath(account, handle)}">${esc(name)}</a>`;
+}
+
+/** Why a post is in For you, for the line above it: "Liked by @x and 2 others you follow". */
+async function whyHTML({ why, parts }) {
+  const debug = params.has("debug") ? ` title="${esc(Object.entries(parts).map(([k, v]) => `${k} ${Math.round(v * 1000) / 1000}`).join(" · "))}"` : "";
+  const line = (name, text) => `<p class="reposted muted small"${debug}>${icon(name)} <span>${text}</span></p>`;
+  if (!why) return params.has("debug") ? line("spark", "From whom you follow") : "";
+  if (why.actors) {
+    const others = why.actors.length - 1;
+    const more = others ? ` and ${others} other${others === 1 ? "" : "s"} you follow` : "";
+    const [verb, name] = { liked: ["Liked by", "like"], reposted: ["Reposted by", "repost"], replied: ["Replied to by", "reply"], quoted: ["Quoted by", "quote"] }[why.type];
+    return line(name, `${verb} ${await nameLink(why.actors[0])}${more}`);
+  }
+  if (why.type === "trend") return line("spark", "Popular in your network today");
+  if (why.type === "network") return line("like", "Liked by people your follows follow");
+  if (why.type === "popular") return line("spark", "Popular on Murmur");
+  return "";
+}
+
+/** Whom to follow, with whom of yours follows them. */
+async function suggestionsHTML(list) {
+  if (!list.length) return "";
+  await know([...list.map((s) => s.account), ...list.flatMap((s) => s.via.slice(0, 1))]);
+  const rows = await Promise.all(list.map(async (s) => {
+    const why = s.via.length
+      ? `Followed by ${await nameLink(s.via[0])}${s.via.length > 1 ? ` and ${s.via.length - 1} more you follow` : ""}`
+      : `${s.followers.toLocaleString("en-US")} ${s.followers === 1 ? "follower" : "followers"}`;
+    return `<li class="suggest-item">${avatar(s.account)}<div class="body">${await byline(s.account)}<p class="muted small">${why}</p></div><button data-act="follow" data-who="${s.account}" aria-pressed="false">Follow</button></li>`;
+  }));
+  return `<section class="suggest" aria-labelledby="suggest-title"><h2 id="suggest-title">Who to follow</h2><ul>${rows.join("")}</ul></section>`;
 }
 
 async function person(draw, who) {
@@ -432,7 +554,7 @@ async function person(draw, who) {
   const name = card.name?.replace(/[@＠﹫]/g, "");
   const actions = self
     ? `<button class="secondary" data-act="edit-card">Edit profile</button>${handle ? "" : `<button class="secondary" data-act="pick-handle">Choose a @handle</button>`}`
-    : `<button data-act="${following ? "unfollow" : "follow"}" data-who="${account}" aria-pressed="${following}">${following ? "Following" : "Follow"}</button>`;
+    : `${mutedSet().has(account) ? `<button class="secondary" data-act="unmute" data-who="${account}">Unmute</button>` : ""}<button data-act="${following ? "unfollow" : "follow"}" data-who="${account}" aria-pressed="${following}">${following ? "Following" : "Follow"}</button>`;
   const html = await renderPosts(posts);
   draw(`
     <section class="profile">
@@ -454,7 +576,7 @@ async function postPage(draw, to) {
   if (!thread) return draw(`<p class="status">This post was deleted, or never was. <a href="#/">Go home</a>.</p>`);
   const above = thread.above.filter((p) => !p.missing);
   const gap = thread.above.some((p) => p.missing) ? `<p class="status muted small">An earlier post in this thread was deleted.</p>` : "";
-  const [aboveHTML, focusHTML, repliesHTML] = await Promise.all([renderPosts(above), renderPosts([thread.post], { focus: to }), renderPosts(thread.replies)]);
+  const [aboveHTML, focusHTML, repliesHTML] = await Promise.all([renderPosts(above), renderPosts([thread.post], { focus: to }), renderPosts(thread.replies.filter((p) => !mutedSet().has(p.author)))]);
   draw(`
     <a class="back" href="#/">← Home</a>
     ${gap}
@@ -633,6 +755,37 @@ async function act(button) {
         ${alt ? `<p class="small muted alt-text">${esc(alt)}</p>` : ""}`;
       return dialog.showModal();
     }
+    case "more": {
+      await know([to.author]);
+      dialog.innerHTML = `
+        <form method="dialog" class="dialog-head"><h2>This post</h2><button class="secondary" value="cancel">Close</button></form>
+        <div class="menu">
+          <button class="secondary" data-act="not-interested" data-key="${to.author}/${to.id}" data-who="${to.author}">Not interested in this post</button>
+          <button class="secondary" data-act="mute" data-who="${to.author}">Mute ${await nameLink(to.author)}</button>
+          <p class="muted small">Only this device knows. Not interested hides this post and shows you less from its author for a while; mute hides them everywhere until you unmute. Nobody is told.</p>
+        </div>`;
+      dialog.querySelectorAll(".menu a").forEach((a) => a.replaceWith(a.textContent));
+      return dialog.showModal();
+    }
+    case "not-interested": {
+      const now = Date.now();
+      feedback.update((v) => {
+        v.hidden[button.dataset.key] = now;
+        v.notInterested[button.dataset.who] = now;
+      });
+      if (dialog.open) dialog.close();
+      say("You'll see less like this.");
+      return render();
+    }
+    case "mute":
+      feedback.update((v) => (v.muted[button.dataset.who] = Date.now()));
+      if (dialog.open) dialog.close();
+      say("Muted. Only this device knows; unmute from their page.");
+      return render();
+    case "unmute":
+      feedback.update((v) => delete v.muted[button.dataset.who]);
+      say("Unmuted.");
+      return render();
     case "edit-card":
       return editCard();
     case "pick-handle": {
@@ -689,6 +842,7 @@ async function editCard() {
 // ---------------------------------------------------------------- the account
 
 function setMe(address) {
+  if ((address ?? null) !== me) seenBefore = null;
   me = address ?? null;
   you.innerHTML = me
     ? `<a class="me" href="${personPath(me)}" aria-label="Your profile">${avatar(me, 32)}</a>`

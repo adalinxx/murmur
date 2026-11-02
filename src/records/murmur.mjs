@@ -208,6 +208,24 @@ export async function likers(state, to) {
 
 /** Whether `account` likes the post `to`. */
 export const likes = async (state, account, to) => (await state.get(likeKey(account, to))) !== undefined;
+/**
+ * Every post and every like on the chain, in two prefix reads: what a reader
+ * ranks a timeline from while the chain is small. `{ posts, likes }`, posts
+ * as `everyone` reads them (reposts included), likes `{ account, author, id }`.
+ * A like keeps no time of its own.
+ */
+export async function snapshot(state) {
+  const [postRows, likeRows] = await Promise.all([entries(state, "post/", 2), entries(state, "like/", 3)]);
+  const posts = [];
+  for (const { parts: [author, id], value } of postRows) {
+    const post = isAddress(author) && isId(id) && parsePost(value);
+    if (post) posts.push({ author, id, at: timeOf(id), ...post });
+  }
+  const likes = likeRows
+    .filter(({ parts: [account, author, id] }) => isAddress(account) && isAddress(author) && isId(id))
+    .map(({ parts: [account, author, id] }) => ({ account, author, id }));
+  return { posts, likes };
+}
 
 /** `account`'s reposts of `to`, as posts: none, or one (two if sent twice at once). */
 export async function repostsOf(state, account, to) {

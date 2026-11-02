@@ -76,6 +76,8 @@ export function createMurmur(options) {
     thread: async (to, options) => records.thread(await state(), to, options),
     stats: async (to, reader) => records.stats(await state(), to, reader),
     card: async (account) => records.card(await state(), account),
+    /** Every post and like, `{ posts, likes }`, for ranking with `rank.index` and `rank.forYou`. */
+    snapshot: async () => records.snapshot(await state()),
 
     /** The picture kept as `cid`, `{ type, bytes }`, checked against it; undefined if it isn't one. Throws when no node serves it. */
     media: async (cid) => {
@@ -113,5 +115,6 @@ export function createMurmur(options) {
 }
 
 export * as records from "./records/murmur.mjs";
+export * as rank from "./foryou.mjs";
 export { MAX_MEDIA_BYTES } from "./media.mjs";
 export { StorageRefused, StorageStopped } from "./storage.mjs";

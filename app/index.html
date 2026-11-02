@@ -150,6 +150,16 @@ dialog::backdrop { background: rgb(0 0 0 / .4); }
 .dialog-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .dialog-head h2 { font-size: 18px; }
 .quoted-in-dialog .post { border-bottom: 0; }
+.menu { display: grid; gap: 10px; }
+.menu button { justify-content: flex-start; text-align: left; }
+.suggest { border-bottom: 1px solid var(--line); padding: 14px 0 6px; }
+.suggest h2 { font-size: 18px; margin-bottom: 4px; }
+.suggest ul { list-style: none; margin: 0; padding: 0; }
+.suggest-item { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.suggest-item .body { flex: 1; min-width: 0; }
+.suggest-item .body p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggest-item button { height: 34px; padding: 0 16px; }
+.caught-up { padding: 16px 0 6px; text-align: center; border-bottom: 1px solid var(--line); }
 .card-form { display: flex; flex-direction: column; gap: 14px; }
 .card-form label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; font-size: 14px; }
 .card-form input, .card-form textarea { font-weight: 400; font-size: 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); }

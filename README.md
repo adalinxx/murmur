@@ -77,12 +77,55 @@ The page re-encodes each picture before keeping it, to WebP (or JPEG), at
 most 2048 pixels across and under 1 MB. This also drops its metadata, such
 as where it was taken. GIFs are kept as they are, so they still move.
 
+## For you
+
+The home timeline is ranked in your browser, from public records and your own
+feedback, with nothing sent anywhere (`src/foryou.mjs`). It reads every post,
+every like and the Follows graph, then:
+
+1. **Trust.** Trust flows three steps out from you along follows, halving
+   each step and split among whom each account follows. Whom you follow count
+   1. Accounts, likes and follows cost nothing but a moment of work, so a like
+   counts only as much as you trust whoever made it. A farm of accounts nobody
+   you trust follows adds nothing, however many it makes (`test/foryou.test.mjs`
+   checks this against a 1,000-account farm).
+2. **Candidates.** Posts by whom you follow, and posts that people you trust
+   liked, reposted, replied to or quoted. A post from outside your network
+   needs that proof: someone you follow, two people you trust, or three today.
+   A reply shows when you follow both sides, it answers you, or someone you
+   follow engaged with it.
+3. **Score.** `1 + 2·affinity + 1.5·log2(1 + trusted engagement) + 0.5·trend
+   + 0.5·mutual`. Affinity is how often you liked, reposted (×2), replied to
+   (×3) or quoted (×3) the author, fading over 30 days. Engagement weighs each
+   account's like 1, repost 2, reply or quote 3, by trust, damped for accounts
+   that like everything. Scores halve every 18 hours, or 36 or 72 when the
+   network is quiet. Posts from outside your network count ×0.75, replies
+   ×0.75, posts you've seen ×0.3.
+4. **Mix.** As X does: an author's nth post on the page counts
+   (1−0.25)·0.5ⁿ + 0.25, so one person can't fill it; one post per
+   conversation; at most 40% from outside your network (60% while you follow
+   fewer than 10); someone you follow at least every fifth post; posts seen
+   before go last.
+
+Each post says why it's there: "Liked by Alice and 2 others you follow". Before
+you follow anyone, For you is what's popular on Murmur, labeled so, with whom
+to follow.
+
+**Not interested** hides a post and shows you less from its author, at 0.2 and
+back to full over 140 days. **Mute** hides someone everywhere until you unmute
+them from their page. Both, and which posts you've seen, stay in this
+browser's storage. Following and Everyone stay newest first.
+
+The weights are starting points taken from the systems they come from (X's
+open-sourced ranking, SybilRank, Mastodon's trends), not tuned yet.
+
 ## The page
 
 `app/` is a static page:
 
-- **Home:** your timeline, made of your posts and those of everyone you
-  follow on Follows, plus Everyone, every post on the chain.
+- **Home:** For you, ranked for you (above); Following, your posts and those
+  of everyone you follow on Follows, newest first; and Everyone, every post on
+  the chain.
 - **A person's page** (`#/@handle` or `#/<account>`): their card, Follows
   counts, a Follow button, and their posts.
 - **A post's page** (`#/<account>/<id>`): the thread above it, and its
