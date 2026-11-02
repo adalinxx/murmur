@@ -56,6 +56,20 @@ header .wrap { display: flex; align-items: center; gap: 12px; height: 60px; }
 #find input:focus { background: var(--bg); border-color: var(--accent); outline: none; }
 #you { flex: none; display: flex; }
 .me { display: flex; border-radius: 50%; }
+#you { align-items: center; gap: 10px; }
+.bell { position: relative; display: flex; color: inherit; padding: 6px; border-radius: 50%; }
+.bell svg { width: 24px; height: 24px; }
+.bell .dot { position: absolute; top: 5px; right: 5px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); }
+.page-title { font-size: 20px; padding: 16px 0 12px; margin: 0; border-bottom: 1px solid var(--line); }
+.notice { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.notice .body { flex: 1; min-width: 0; }
+.notice .body p { margin: 6px 0 0; }
+.notice-icon { width: 40px; display: flex; justify-content: flex-end; color: var(--accent); }
+.notice.like .notice-icon { color: var(--like); }
+.notice-icon svg { width: 26px; height: 26px; }
+.faces { display: flex; gap: 4px; }
+.notice-target { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.unread { box-shadow: inset 3px 0 0 var(--accent); background: color-mix(in srgb, var(--accent) 5%, transparent); }
 
 main.wrap { padding-top: 0; padding-bottom: 64px; }
 .status { padding: 24px 0; }

@@ -20,7 +20,7 @@ export function parseRoute(hash) {
   }
   const parts = path.split("/").filter(Boolean);
   if (parts.length === 0) return { view: "home" };
-  if (parts.length === 1 && (parts[0] === "everyone" || parts[0] === "following")) return { view: parts[0] };
+  if (parts.length === 1 && ["everyone", "following", "notifications"].includes(parts[0])) return { view: parts[0] };
   if (parts.length === 1) {
     const who = parseWho(parts[0]);
     return who ? { view: "person", who } : { view: "missing" };

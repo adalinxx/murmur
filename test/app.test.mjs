@@ -11,6 +11,7 @@ test("routes", () => {
   assert.deepEqual(parseRoute("#/"), { view: "home" });
   assert.deepEqual(parseRoute("#/everyone"), { view: "everyone" });
   assert.deepEqual(parseRoute("#/following"), { view: "following" });
+  assert.deepEqual(parseRoute("#/notifications"), { view: "notifications" });
   assert.deepEqual(parseRoute("#/@Ada"), { view: "person", who: { handle: "ada" } });
   assert.deepEqual(parseRoute(`#/${ALICE}`), { view: "person", who: { account: ALICE } });
   assert.deepEqual(parseRoute(`#/${ALICE}/lz3k9q2a0x7c1`), { view: "post", author: ALICE, id: "lz3k9q2a0x7c1" });

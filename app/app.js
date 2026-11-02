@@ -8,6 +8,7 @@
 // Routes: #/                     For you: ranked here, from whom you follow and what they like
 //         #/following            whom you follow, newest first
 //         #/everyone             every post, newest first
+//         #/notifications        replies, quotes, mentions, reposts, likes and follows of yours
 //         #/@<h> or #/<account>  a person: their card, counts and posts
 //         #/<account>/<id>       a post, with the thread around it
 //
@@ -18,7 +19,7 @@
 // `?moniker=`, `?sponsor=` and `?wallet=` to use other nodes, chains,
 // sponsor or Selfhold.
 import * as sdk from "../vendor/lattice-sdk.js";
-import { createMurmur, MAX_MEDIA_BYTES, rank, records as m, StorageRefused, StorageStopped } from "../src/index.mjs";
+import { createMurmur, MAX_MEDIA_BYTES, notifications, rank, records as m, StorageRefused, StorageStopped } from "../src/index.mjs";
 import { createFollows } from "../vendor/follows/src/index.mjs";
 import * as followRecords from "../vendor/follows/src/records/follows.mjs";
 import { createMoniker } from "./vendor/moniker-sdk/src/index.mjs";
@@ -213,6 +214,9 @@ const ICONS = {
   like: '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
   delete: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
 };
+ICONS.bell = '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15L6 16ZM10 20.5a2.2 2.2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>';
+ICONS.follow = '<circle cx="10" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 19a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>';
+ICONS.mention = '<circle cx="12" cy="12" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.5 12v1.5a2.5 2.5 0 0 0 5 0V12a8.5 8.5 0 1 0-3.3 6.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>';
 ICONS.more = '<circle cx="6" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="18" cy="12" r="1.6" fill="currentColor"/>';
 ICONS.spark = '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>';
 const icon = (name) => `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -245,6 +249,7 @@ async function render() {
     if (route.view === "home") await home(draw, "foryou");
     else if (route.view === "following") await home(draw, me ? "following" : "foryou");
     else if (route.view === "everyone") await home(draw, "everyone");
+    else if (route.view === "notifications") await notificationsPage(draw);
     else if (route.view === "person") await person(draw, route.who);
     else if (route.view === "post") await postPage(draw, route);
     else draw(`<p class="status">Nothing is here. <a href="#/">Go home</a>.</p>`);
@@ -253,6 +258,7 @@ async function render() {
     draw(`<div class="status"><p>Murmur couldn't be read just now: ${esc(error.message)}</p><button class="secondary" data-act="retry">Try again</button></div>`);
   } finally {
     if (mine === showing) main.removeAttribute("aria-busy");
+    checkUnread();
   }
 }
 
@@ -421,6 +427,96 @@ async function home(draw, view) {
     return draw(`${top()}<p class="status muted">You follow nobody yet. Find people on <a href="#/">For you</a> or <a href="#/everyone">Everyone</a>, then follow them from their page.</p><ul class="posts">${html}</ul>`);
   }
   draw(`${top()}${html ? `<ul class="posts">${html}</ul>` : `<p class="status muted">No posts yet. Be the first.</p>`}`);
+}
+
+// ---------------------------------------------------------------- notifications
+
+// Nothing tells you what happened; the page reads it from the chain. Likes
+// and follows carry no time, so this device keeps when it first saw each, and
+// when you last looked. Seen nowhere else.
+const notifyStore = {
+  key: () => `murmur:notify:${me}`,
+  load() {
+    try {
+      const v = JSON.parse(localStorage.getItem(this.key()) ?? "null");
+      return v && typeof v === "object" ? { firstSeen: v.firstSeen ?? {}, readAt: v.readAt ?? 0, started: true } : { firstSeen: {}, readAt: 0, started: false };
+    } catch {
+      return { firstSeen: {}, readAt: 0, started: false };
+    }
+  },
+  save(v) {
+    try {
+      localStorage.setItem(this.key(), JSON.stringify({ firstSeen: v.firstSeen, readAt: v.readAt }));
+    } catch {}
+  },
+};
+
+/** What happened to you, with each like and follow stamped the first time this device sees it. */
+async function readNotifications() {
+  const account = me;
+  const [snapshot, followers, handle] = await Promise.all([murmur.snapshot(), graph.followers(account).catch(() => []), know([account]).then(() => handleOf(account))]);
+  const saved = notifyStore.load();
+  const firstSeen = new Map(Object.entries(saved.firstSeen).filter(([, t]) => t > 0));
+  const muted = mutedSet();
+  const { items, keys } = notifications(snapshot, account, { followers, handle, firstSeen, muted });
+  // The first look stamps what's there already as old (0), so it isn't all "now".
+  const now = Date.now();
+  let changed = false;
+  for (const k of keys) if (!(k in saved.firstSeen)) (saved.firstSeen[k] = saved.started ? now : 0), (changed = true);
+  if (changed && account === me) notifyStore.save(saved);
+  if (!changed) return { items, saved };
+  // Read again with the new stamps, so they sort as new.
+  const again = new Map(Object.entries(saved.firstSeen).filter(([, t]) => t > 0));
+  return { items: notifications(snapshot, account, { followers, handle, firstSeen: again, muted }).items, saved };
+}
+
+let unreadAt = 0;
+/** Lights the bell when something happened since you last looked; at most once a minute. */
+async function checkUnread({ force = false } = {}) {
+  if (!me || (!force && Date.now() - unreadAt < 60_000)) return;
+  unreadAt = Date.now();
+  try {
+    const { items, saved } = await readNotifications();
+    const n = items.filter((i) => i.at > saved.readAt).length;
+    const dot = you.querySelector(".bell .dot");
+    if (!dot) return;
+    dot.hidden = n === 0 || parseRoute(location.hash).view === "notifications";
+    you.querySelector(".bell").setAttribute("aria-label", n ? `Notifications, ${n} new` : "Notifications");
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function notificationsPage(draw) {
+  const top = `<h1 class="page-title" tabindex="-1">Notifications</h1>`;
+  if (!me) return draw(`${top}<section class="intro"><p class="muted">Connect to see who replied to you, liked or reposted your posts, mentioned you and followed you.</p><button data-act="connect">Connect with Selfhold</button></section>`);
+  draw(`${top}<p class="status muted">Reading…</p>`);
+  const { items, saved } = await readNotifications();
+  const readAt = saved.readAt;
+  saved.readAt = Date.now();
+  notifyStore.save(saved);
+  const dot = you.querySelector(".bell .dot");
+  if (dot) dot.hidden = true;
+  if (!items.length) return draw(`${top}<p class="status muted">Nothing yet. When someone replies to you, likes or reposts your posts, mentions your @handle or follows you, it shows here.</p>`);
+  await know(items.flatMap((i) => [...(i.actors?.slice(0, 6) ?? []), i.post?.author].filter(Boolean)));
+  const rows = await Promise.all(items.map(async (item) => {
+    const fresh = item.at > readAt ? " unread" : "";
+    if (item.post) {
+      const [verb, name] = { reply: ["replied", "reply"], quote: ["quoted your post", "quote"], mention: ["mentioned you", "mention"] }[item.type];
+      const header = `<p class="reposted muted small">${icon(name)} <span>${await nameLink(item.post.author)} ${verb}</span></p>`;
+      const html = await renderPosts([item.post], { headers: new Map([[`${item.post.author}/${item.post.id}`, header]]) });
+      return fresh ? html.replace('class="post', `class="post${fresh}`) : html;
+    }
+    const others = item.actors.length - 1;
+    const who = `${await nameLink(item.actors[0])}${others ? ` and ${others} other${others === 1 ? "" : "s"}` : ""}`;
+    const [name, verb] = { like: ["like", "liked your post"], repost: ["repost", "reposted your post"], follow: ["follow", "followed you"] }[item.type];
+    const faces = item.actors.slice(0, 6).map((a) => `<a href="${personPath(a)}" aria-hidden="true" tabindex="-1">${avatar(a, 28)}</a>`).join("");
+    const target = item.target
+      ? `<a class="notice-target muted" href="${postPath(item.target)}">${esc(item.target.text?.trim() || (item.target.media?.length ? "A picture" : "Your post"))}</a>`
+      : "";
+    return `<li class="notice ${item.type}${fresh}"><span class="notice-icon">${icon(name)}</span><div class="body"><div class="faces">${faces}</div><p>${who} ${verb}</p>${target}</div></li>`;
+  }));
+  draw(`${top}<ul class="posts notices">${rows.join("")}</ul>`);
 }
 
 // ---------------------------------------------------------------- For you
@@ -845,8 +941,9 @@ function setMe(address) {
   if ((address ?? null) !== me) seenBefore = null;
   me = address ?? null;
   you.innerHTML = me
-    ? `<a class="me" href="${personPath(me)}" aria-label="Your profile">${avatar(me, 32)}</a>`
+    ? `<a class="bell" href="#/notifications" aria-label="Notifications">${icon("bell")}<span class="dot" hidden></span></a><a class="me" href="${personPath(me)}" aria-label="Your profile">${avatar(me, 32)}</a>`
     : `<button data-act="connect">Connect</button>`;
+  if (me) checkUnread();
 }
 
 async function connect() {

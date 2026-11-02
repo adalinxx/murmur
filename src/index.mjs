@@ -116,5 +116,6 @@ export function createMurmur(options) {
 
 export * as records from "./records/murmur.mjs";
 export * as rank from "./foryou.mjs";
+export { notifications } from "./notify.mjs";
 export { MAX_MEDIA_BYTES } from "./media.mjs";
 export { StorageRefused, StorageStopped } from "./storage.mjs";

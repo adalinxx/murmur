@@ -33,6 +33,8 @@ await shot("foryou-anyone", "#/");
 await shot("home-bob", "#/", { as: keep.bob });
 await shot("following-bob", "#/following", { as: keep.bob });
 await shot("foryou-carol", "#/", { as: keep.carol });
+await shot("notifications-carol", "#/notifications", { as: keep.carol });
+await shot("notifications-alice", "#/notifications", { as: keep.alice });
 await shot("person-carol", `#/${keep.carol}`, { as: keep.bob });
 await shot("thread", `#/${keep.carol}/${keep.carolPost}`, { as: keep.bob });
 await shot("home-bob-dark", "#/", { as: keep.bob, dark: true });

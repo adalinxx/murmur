@@ -119,6 +119,14 @@ browser's storage. Following and Everyone stay newest first.
 The weights are starting points taken from the systems they come from (X's
 open-sourced ranking, SybilRank, Mastodon's trends), not tuned yet.
 
+## Notifications
+
+Nothing tells you what happened; the page reads it from the chain
+(`src/notify.mjs`): replies to and quotes of your posts, posts naming your
+@handle, reposts and likes grouped by post, and new followers grouped by day.
+Likes and follows carry no time, so this browser keeps when it first saw each
+one, and when you last looked, to light the bell. Muted accounts are left out.
+
 ## The page
 
 `app/` is a static page:
