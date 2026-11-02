@@ -3,6 +3,8 @@
 Short posts no one can take down or sell, on Lattice. Post, reply, repost,
 quote, like and share pictures, with no server and no coins.
 
+**Try it:** https://adalinxx.github.io/murmur/app/ (testnet).
+
 - **Your posts are yours.** Murmur is its own Lattice chain. Every record
   belongs to the account named in its key, and only that account can write
   or delete it. A post is created once and never edited, so a reply or a
