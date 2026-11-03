@@ -603,21 +603,15 @@ const mutedSet = () => new Set(Object.keys(feedback.load().muted));
 // What earlier visits showed, read once a visit, so this visit's order holds still.
 let seenBefore = null;
 
-/** Every follow on Follows, account to account: a follow of a @handle counts for the account that shows it now. */
+/** Every follow on Follows: account to account, as Follows keeps them. */
 async function followEdges() {
   const state = await graph.state();
-  const rows = [];
+  const edges = [];
   for await (const [key] of state.list("follows/")) {
-    const [a, t] = key.slice("follows/".length).split("/");
-    if (followRecords.isAddress(a) && t) rows.push([a, t]);
+    const [a, t, ...rest] = key.slice("follows/".length).split("/");
+    if (!rest.length && followRecords.isAddress(a) && followRecords.isAddress(t)) edges.push([a, t]);
   }
-  const handles = [...new Set(rows.filter(([, t]) => t.startsWith("@")).map(([, t]) => t.slice(1)))];
-  const accounts = await followRecords.accountsOf(names, handles).catch(() => handles.map(() => undefined));
-  const of = new Map(handles.map((h, i) => [h, accounts[i]]));
-  return rows.flatMap(([a, t]) => {
-    const to = t.startsWith("@") ? of.get(t.slice(1)) : t;
-    return to && followRecords.isAddress(to) ? [[a, to]] : [];
-  });
+  return edges;
 }
 
 async function forYouPage(draw, top) {
