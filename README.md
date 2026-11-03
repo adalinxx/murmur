@@ -136,6 +136,10 @@ one, and when you last looked, to light the bell. Muted accounts are left out.
   the chain.
   50 at a time (For you 30), with Show more; a "New posts" button appears when
   someone the timeline shows has posted since, checked once a minute.
+- **Search:** the box at the top finds posts holding every word typed (any
+  case or accent; a #tag or @handle only whole), newest first, at
+  `#/search?q=…`, read in the browser from the same snapshot as For you.
+  `@someone` or an account ID goes to that person.
 - **Profiles:** Posts (without replies), Replies, Media and Likes, at
   `#/<who>`, `#/<who>/replies`, `#/<who>/media` and `#/<who>/likes`.
 - **A person's page** (`#/@handle` or `#/<account>`): their card, Follows

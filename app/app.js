@@ -8,6 +8,7 @@
 // Routes: #/                     For you: ranked here, from whom you follow and what they like
 //         #/following            whom you follow, newest first
 //         #/everyone             every post, newest first
+//         #/search?q=<words>     posts holding every word
 //         #/notifications        replies, quotes, mentions, reposts, likes and follows of yours
 //         #/@<h> or #/<account>  a person: their card, counts and posts
 //         #/<account>/<id>       a post, with the thread around it
@@ -19,7 +20,7 @@
 // `?moniker=`, `?sponsor=` and `?wallet=` to use other nodes, chains,
 // sponsor or Selfhold.
 import * as sdk from "../vendor/lattice-sdk.js";
-import { createMurmur, MAX_MEDIA_BYTES, notifications, rank, records as m, StorageRefused, StorageStopped } from "../src/index.mjs";
+import { createMurmur, MAX_MEDIA_BYTES, notifications, rank, searchPosts, records as m, StorageRefused, StorageStopped } from "../src/index.mjs";
 import { createFollows } from "../vendor/follows/src/index.mjs";
 import * as followRecords from "../vendor/follows/src/records/follows.mjs";
 import { createMoniker } from "./vendor/moniker-sdk/src/index.mjs";
@@ -27,7 +28,7 @@ import { defineHandlePicker } from "./vendor/moniker-sdk/src/picker.mjs";
 import { accountIcon, shortAccount } from "./vendor/moniker-sdk/src/records/account.mjs";
 import { selfhold } from "./vendor/selfhold.mjs";
 import { hasher, workDevice } from "./vendor/work/hash.mjs";
-import { ago, count, esc, left, parseRoute, PROFILE_TABS, parseWho, personPath, postPath, renderText, when } from "./lib.mjs";
+import { ago, count, esc, left, parseRoute, PROFILE_TABS, searchPath, parseWho, personPath, postPath, renderText, when } from "./lib.mjs";
 
 const params = new URLSearchParams(location.search);
 const list = (name) => params.get(name)?.split(",").filter(Boolean);
@@ -251,6 +252,7 @@ async function render() {
     else if (route.view === "following") await home(draw, me ? "following" : "foryou");
     else if (route.view === "everyone") await home(draw, "everyone");
     else if (route.view === "notifications") await notificationsPage(draw);
+    else if (route.view === "search") await searchPage(draw, route.q);
     else if (route.view === "person") await person(draw, route.who, route.tab);
     else if (route.view === "post") await postPage(draw, route);
     else draw(`<p class="status">Nothing is here. <a href="#/">Go home</a>.</p>`);
@@ -458,6 +460,27 @@ async function home(draw, view) {
     return draw(`${top()}<p class="status muted">You follow nobody yet. Find people on <a href="#/">For you</a> or <a href="#/everyone">Everyone</a>, then follow them from their page.</p><ul class="posts">${html}</ul>`);
   }
   draw(`${top()}${html ? `<ul class="posts">${html}</ul>${more}` : `<p class="status muted">No posts yet. Be the first.</p>`}`);
+}
+
+// ---------------------------------------------------------------- search
+
+async function searchPage(draw, q) {
+  document.querySelector("#q").value = q;
+  const top = `<h1 class="page-title" tabindex="-1">Search: ${esc(q)}</h1>`;
+  draw(`${top}<p class="status muted">Searching…</p>`);
+  const { posts } = await murmur.snapshot();
+  const found = searchPosts(posts, q, { muted: mutedSet() });
+  // A single word that could be a handle: offer the person too, when someone shows it.
+  const word = q.trim().replace(/^[@＠]/, "").toLowerCase();
+  const who = parseWho(word);
+  const person = who?.handle ? await graph.person(`@${who.handle}`).catch(() => ({})) : {};
+  let people = "";
+  if (person.account) {
+    await know([person.account]);
+    people = `<ul class="suggest-list"><li class="suggest-item">${avatar(person.account)}<div class="body">${await byline(person.account)}</div></li></ul>`;
+  }
+  const html = await renderPosts(found);
+  draw(`${top}${people}${html ? `<ul class="posts">${html}</ul>` : `<p class="status muted">No posts hold ${esc(q)}. Search finds posts holding every word you type.</p>`}`);
 }
 
 // ---------------------------------------------------------------- notifications
@@ -1093,10 +1116,12 @@ document.addEventListener("submit", async (event) => {
 document.querySelector("#find").addEventListener("submit", (event) => {
   event.preventDefault();
   const input = event.target.elements.q;
-  const who = parseWho(input.value);
-  if (!who) return say("Search a @handle or an account ID.", { error: true });
-  location.hash = personPath(who.account, who.handle);
-  input.value = "";
+  const typed = input.value.trim();
+  if (!typed) return;
+  // @someone or an account ID goes to them; anything else searches posts.
+  const who = /^[@＠]/.test(typed) || followRecords.isAddress(typed) ? parseWho(typed.replace(/^＠/, "@")) : null;
+  location.hash = who ? personPath(who.account, who.handle) : searchPath(typed);
+  if (who) input.value = "";
 });
 addEventListener("hashchange", () => {
   if (dialog.open) dialog.close();

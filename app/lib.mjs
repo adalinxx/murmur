@@ -18,6 +18,8 @@ export function parseRoute(hash) {
   } catch {
     return { view: "missing" };
   }
+  // "?" is in no handle, so search never meets a person.
+  if (path.startsWith("search?")) return { view: "search", q: new URLSearchParams(path.slice("search?".length)).get("q") ?? "" };
   const parts = path.split("/").filter(Boolean);
   if (parts.length === 0) return { view: "home" };
   if (parts.length === 1 && ["everyone", "following", "notifications"].includes(parts[0])) return { view: parts[0] };
@@ -43,6 +45,9 @@ export function parseWho(text) {
 }
 
 export const postPath = ({ author, id }) => `#/${author}/${id}`;
+/** Where a search for `q` shows. */
+export const searchPath = (q) => `#/search?${new URLSearchParams({ q })}`;
+
 /** A profile's tabs past its first, Posts: `#/<who>/<tab>`. */
 export const PROFILE_TABS = ["replies", "media", "likes"];
 export const personPath = (account, handle) => `#/${handle ? `@${handle}` : account}`;

@@ -176,6 +176,7 @@ dialog::backdrop { background: rgb(0 0 0 / .4); }
 .more { display: flex; justify-content: center; padding: 16px 0; }
 .new-posts { position: fixed; top: 72px; left: 50%; transform: translateX(-50%); z-index: 6; box-shadow: 0 2px 10px rgb(0 0 0 / 0.18); }
 .new-posts[hidden] { display: none; }
+.suggest-list { list-style: none; margin: 0; padding: 0; border-bottom: 1px solid var(--line); }
 .caught-up { padding: 16px 0 6px; text-align: center; border-bottom: 1px solid var(--line); }
 .card-form { display: flex; flex-direction: column; gap: 14px; }
 .card-form label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; font-size: 14px; }
@@ -200,8 +201,8 @@ h1[tabindex="-1"]:focus { outline: none; }
   <div class="wrap">
     <a class="brand" href="#/">Murmur</a>
     <form id="find" role="search">
-      <label class="sr" for="q">Find a @handle or an account</label>
-      <input id="q" name="q" type="search" placeholder="Find @handle" autocomplete="off" spellcheck="false">
+      <label class="sr" for="q">Search posts, or find a @handle or an account</label>
+      <input id="q" name="q" type="search" placeholder="Search Murmur or @handle" autocomplete="off" spellcheck="false">
     </form>
     <div id="you"></div>
   </div>

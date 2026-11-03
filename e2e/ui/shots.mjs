@@ -38,6 +38,8 @@ await shot("notifications-alice", "#/notifications", { as: keep.alice });
 await shot("profile-carol-replies", `#/${keep.carol}/replies`, { as: keep.bob });
 await shot("profile-carol-media", `#/${keep.carol}/media`, { as: keep.bob });
 await shot("profile-bob-likes", `#/${keep.bob}/likes`, { as: keep.bob });
+await shot("search-pictures", `#/search?${new URLSearchParams({ q: "PICTURES kept" })}`, { as: keep.bob });
+await shot("search-none", `#/search?${new URLSearchParams({ q: "zeppelin" })}`);
 await shot("person-carol", `#/${keep.carol}`, { as: keep.bob });
 await shot("thread", `#/${keep.carol}/${keep.carolPost}`, { as: keep.bob });
 await shot("home-bob-dark", "#/", { as: keep.bob, dark: true });
