@@ -1,4 +1,4 @@
-// From Stoa (adalinxx/stoa, client/storage.mjs), unchanged: the storage sponsor
+// From Stoa (stoasocial/stoa, client/storage.mjs), unchanged: the storage sponsor
 // client Stoa uses, for Murmur's pictures.
 // Media kept for good, paid for with this device's work: a storage sponsor
 // (0xLattice/lattice-sponsor run with --sell-storage) pins a file's Volume on
