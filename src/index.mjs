@@ -35,16 +35,13 @@ export function createMurmur(options) {
   function state({ fresh = false } = {}) {
     if (!fresh && current && Date.now() - current.at < freshFor) return current.state;
     const read = (async () => {
-      let failure;
-      for (const node of nodes) {
-        try {
-          const { generalStateCID } = await tip(sdk, node, chain, volumes);
-          return view(load, generalStateCID);
-        } catch (error) {
-          failure = error;
-        }
+      // Every node is asked for its tip at once; the first to answer is read.
+      try {
+        const { generalStateCID } = await Promise.any(nodes.map((node) => tip(sdk, node, chain, volumes)));
+        return view(load, generalStateCID);
+      } catch (error) {
+        throw new Error(`No node is serving ${chain.join("/")}`, { cause: error.errors?.[0] ?? error });
       }
-      throw new Error(`No node is serving ${chain.join("/")}`, { cause: failure });
     })();
     current = { at: Date.now(), state: read };
     read.catch(() => current?.state === read && (current = null));

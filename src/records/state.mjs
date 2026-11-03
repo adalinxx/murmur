@@ -35,22 +35,66 @@ export function volumeLoader(volumes, decodeDagCbor) {
  * holds it may serve it: each read starts at the next host and moves on from
  * one that lacks the content, refuses, or serves bytes that fail their CID.
  */
-export function anyHost(transports) {
+export function anyHost(transports, { timeout = 10_000, rest = 60_000, hedge = 1_500 } = {}) {
+  // Each read asks one host; if it hasn't answered in `hedge` ms the next is
+  // asked too, and the first answer wins. A host that fails or keeps a read
+  // past `timeout` rests for `rest` ms, asked only after the others.
+  const restingUntil = transports.map(() => 0);
   let next = 0;
+  const ask = (i, rootCID, signal) => {
+    const limit = AbortSignal.timeout(timeout);
+    const both = signal ? AbortSignal.any([signal, limit]) : limit;
+    // Raced as well as passed on, for a transport that doesn't heed the signal.
+    const stopped = new Promise((_, reject) => both.addEventListener("abort", () => reject(both.reason), { once: true }));
+    return Promise.race([transports[i].getVolume(rootCID, both), stopped]).then(
+      (volume) => volume,
+      (error) => {
+        if (!signal?.aborted) restingUntil[i] = Date.now() + rest;
+        throw error;
+      },
+    );
+  };
   return {
-    async getVolume(rootCID, signal) {
+    getVolume(rootCID, signal) {
       const start = next++;
-      let failure;
-      for (let offset = 0; offset < transports.length; offset++) {
-        try {
-          const volume = await transports[(start + offset) % transports.length].getVolume(rootCID, signal);
-          if (volume) return volume;
-        } catch (error) {
-          failure = error;
-        }
-      }
-      if (failure) throw failure;
-      return null;
+      const now = Date.now();
+      const order = transports.map((_, i) => (start + i) % transports.length).sort((a, b) => (restingUntil[a] > now) - (restingUntil[b] > now));
+      return new Promise((resolve, reject) => {
+        let pending = 0;
+        let asked = 0;
+        let done = false;
+        let failure;
+        let timer;
+        const finish = (fn, value) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          fn(value);
+        };
+        const launch = () => {
+          if (done || asked >= order.length) return;
+          const i = order[asked++];
+          pending++;
+          ask(i, rootCID, signal).then(
+            (volume) => {
+              pending--;
+              if (volume) return finish(resolve, volume);
+              if (!pending && asked >= order.length) finish(resolve, null);
+              else launch();
+            },
+            (error) => {
+              pending--;
+              failure = error;
+              if (signal?.aborted) return finish(reject, error);
+              if (asked < order.length) launch();
+              else if (!pending) finish(reject, failure);
+            },
+          );
+          clearTimeout(timer);
+          if (asked < order.length) timer = setTimeout(launch, hedge);
+        };
+        launch();
+      });
     },
   };
 }
@@ -107,12 +151,12 @@ async function* entries(load, node, volume, path) {
  * inside its post state, and the CID of the chain spec it runs under. Only
  * the hash is the node's word; the rest is read from the block by CID.
  */
-export async function tip(sdk, nodeURL, chainPath, volumes) {
+export async function tip(sdk, nodeURL, chainPath, volumes, { timeout = 8_000 } = {}) {
   const url = new URL("/api/block/latest", nodeURL);
   url.searchParams.set("chainPath", chainPath.join("/"));
   // The node lets the latest block be cached for a few seconds; a writer
   // needs the tip as it is now.
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(timeout) });
   if (!response.ok) throw new Error(`latest block: HTTP ${response.status}`);
   const { hash } = await response.json();
   const block = sdk.decodeCanonicalBlock((await volumes.get(hash)).rootBytes());

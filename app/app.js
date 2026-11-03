@@ -43,11 +43,21 @@ const murmur = createMurmur({ sdk, nodes: NODES, storage: SPONSOR, ...(path("cha
 const moniker = createMoniker({ sdk, app: MONIKER_APP, ...(path("moniker") && { chain: path("moniker") }), ...(list("node") && { nodes: NODES }) });
 // Moniker as Follows reads it, where a Moniker that can't be read means nobody shows a
 // handle just now: people show by account, and Murmur still works.
+// Nor one that is slow to answer: past 8 s, nobody shows a handle, and for
+// a minute after, Moniker isn't waited for at all.
+let monikerRestsUntil = 0;
+const late = (read, fallback) => {
+  if (Date.now() < monikerRestsUntil) return Promise.resolve(fallback);
+  return Promise.race([
+    read().catch(() => fallback),
+    new Promise((resolve) => setTimeout(() => ((monikerRestsUntil = Date.now() + 60_000), resolve(fallback)), 8_000)),
+  ]);
+};
 const names = {
-  state: (options) => moniker.state(options).catch(() => null),
-  pointer: (h) => moniker.pointer(h).catch(() => undefined),
-  pointers: (hs) => Promise.all(hs.map((h) => moniker.pointer(h).catch(() => undefined))),
-  handlesOf: (as) => moniker.handlesOf(as).catch(() => as.map(() => undefined)),
+  state: (options) => late(() => moniker.state(options), null),
+  pointer: (h) => late(() => moniker.pointer(h), undefined),
+  pointers: (hs) => Promise.all(hs.map((h) => late(() => moniker.pointer(h), undefined))),
+  handlesOf: (as) => late(() => moniker.handlesOf(as), as.map(() => undefined)),
 };
 const graph = createFollows({ sdk, moniker: names, nodes: NODES, ...(path("follows") && { chain: path("follows") }) });
 
@@ -449,7 +459,7 @@ async function home(draw, view) {
   if (view === "everyone") {
     posts = await murmur.everyone({ limit: limit + 1 });
   } else {
-    following = await graph.followingAccounts(me).catch(() => []);
+    following = await within(graph.followingAccounts(me).catch(() => []), 8_000, []);
     posts = await murmur.feed([me, ...following], { limit: limit + 1 });
   }
   const more = moreButton(limit, posts.length);
@@ -473,7 +483,7 @@ async function searchPage(draw, q) {
   // A single word that could be a handle: offer the person too, when someone shows it.
   const word = q.trim().replace(/^[@＠]/, "").toLowerCase();
   const who = parseWho(word);
-  const person = who?.handle ? await graph.person(`@${who.handle}`).catch(() => ({})) : {};
+  const person = who?.handle ? await within(graph.person(`@${who.handle}`).catch(() => ({})), 8_000, {}) : {};
   let people = "";
   if (person.account) {
     await know([person.account]);
@@ -508,7 +518,7 @@ const notifyStore = {
 /** What happened to you, with each like and follow stamped the first time this device sees it. */
 async function readNotifications() {
   const account = me;
-  const [snapshot, followers, handle] = await Promise.all([murmur.snapshot(), graph.followers(account).catch(() => []), know([account]).then(() => handleOf(account))]);
+  const [snapshot, followers, handle] = await Promise.all([murmur.snapshot(), within(graph.followers(account).catch(() => []), 8_000, []), know([account]).then(() => handleOf(account))]);
   const saved = notifyStore.load();
   const firstSeen = new Map(Object.entries(saved.firstSeen).filter(([, t]) => t > 0));
   const muted = mutedSet();
@@ -603,6 +613,16 @@ const mutedSet = () => new Set(Object.keys(feedback.load().muted));
 // What earlier visits showed, read once a visit, so this visit's order holds still.
 let seenBefore = null;
 
+/**
+ * `promise`, or `fallback` once `ms` pass: for reads of Follows, which waits
+ * as long as its hosts do. A page without follows beats a page that never draws.
+ */
+let followsRestsUntil = 0;
+const within = (promise, ms, fallback) => {
+  if (Date.now() < followsRestsUntil) return Promise.resolve(fallback);
+  return Promise.race([promise, new Promise((resolve) => setTimeout(() => ((followsRestsUntil = Date.now() + 60_000), resolve(fallback)), ms))]);
+};
+
 /** Every follow on Follows: account to account, as Follows keeps them. */
 async function followEdges() {
   const state = await graph.state();
@@ -615,7 +635,7 @@ async function followEdges() {
 }
 
 async function forYouPage(draw, top) {
-  const [snapshot, follows] = await Promise.all([murmur.snapshot(), followEdges().catch(() => [])]);
+  const [snapshot, follows] = await Promise.all([murmur.snapshot(), within(followEdges().catch(() => []), 8_000, [])]);
   const g = rank.index({ ...snapshot, follows });
   const saved = feedback.load();
   seenBefore ??= new Set(Object.keys(saved.seen));
@@ -695,16 +715,17 @@ async function suggestionsHTML(list) {
 }
 
 async function person(draw, who, tab = "posts") {
-  const found = await graph.person(who.account ?? `@${who.handle}`);
+  const found = await within(graph.person(who.account ?? `@${who.handle}`), 8_000, who.account ? { account: who.account } : null);
+  if (!found) throw new Error(`no host answered who @${who.handle} is`);
   if (!found.account) return draw(`<p class="status">Nobody shows @${esc(who.handle)} now. <a href="${MONIKER_APP}">It may be free on Moniker.</a></p>`);
   const account = found.account;
   await know([account]);
   const [handle, card, counts, posts, following] = await Promise.all([
     handleOf(account),
     cardOf(account),
-    graph.counts(account).catch(() => undefined),
+    within(graph.counts(account).catch(() => undefined), 8_000, undefined),
     tab === "likes" ? murmur.likedBy(account, { limit: 100 }) : murmur.postsBy(account, { limit: tab === "posts" ? 300 : 500 }),
-    me && me !== account ? graph.follows(me, account).catch(() => false) : false,
+    me && me !== account ? within(graph.follows(me, account).catch(() => false), 8_000, false) : false,
   ]);
   const self = account === me;
   const name = card.name?.replace(/[@＠﹫]/g, "");
