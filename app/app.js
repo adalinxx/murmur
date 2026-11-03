@@ -639,7 +639,7 @@ async function forYouPage(draw, top) {
   const hint = cold && me ? `<p class="status muted small">These are popular on Murmur. Follow people and For you becomes yours: what they post, and what they like.</p>` : "";
   const suggest = await suggestionsHTML(suggestions);
   if (!items.length) return draw(`${top()}${hint}<p class="status muted">Nothing here yet. Be the first to post.</p>${suggest}`);
-  await know(items.flatMap((i) => [i.post.author, ...(i.why?.actors?.slice(0, 1) ?? [])]));
+  await know(items.flatMap((i) => [i.post.author, ...(i.why?.actors?.slice(0, 1) ?? []), ...(i.why?.because ? [i.why.because.author] : [])]));
   const headers = new Map(await Promise.all(items.map(async (i) => [i.key, await whyHTML(i)])));
   const fresh = items.filter((i) => !i.seen).map((i) => i.post);
   const old = items.filter((i) => i.seen).map((i) => i.post);
@@ -669,6 +669,11 @@ async function whyHTML({ why, parts }) {
     const more = others ? ` and ${others} other${others === 1 ? "" : "s"} you follow` : "";
     const [verb, name] = { liked: ["Liked by", "like"], reposted: ["Reposted by", "repost"], replied: ["Replied to by", "reply"], quoted: ["Quoted by", "quote"] }[why.type];
     return line(name, `${verb} ${await nameLink(why.actors[0])}${more}`);
+  }
+  if (why.type === "similar") {
+    await know([why.because.author]);
+    const whose = why.because.author === me ? "your" : `${await nameLink(why.because.author)}'s`;
+    return line("like", `Because you liked ${whose} <a href="${postPath(why.because)}">post</a>`);
   }
   if (why.type === "trend") return line("spark", "Popular in your network today");
   if (why.type === "network") return line("like", "Liked by people your follows follow");

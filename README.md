@@ -94,8 +94,12 @@ every like and the Follows graph, then:
    needs that proof: someone you follow, two people you trust, or three today.
    A reply shows when you follow both sides, it answers you, or someone you
    follow engaged with it.
+   And "because you liked": for your last 30 likes, reposts, replies and
+   quotes, what else the people who also engaged with them engaged with, each
+   counting its trust over the root of how much it engages (item to item, as
+   Pinterest's Pixie and X's GraphJet walk it).
 3. **Score.** `1 + 2·affinity + 1.5·log2(1 + trusted engagement) + 0.5·trend
-   + 0.5·mutual`. Affinity is how often you liked, reposted (×2), replied to
+   + 0.5·mutual + 1·similar`. Affinity is how often you liked, reposted (×2), replied to
    (×3) or quoted (×3) the author, fading over 30 days. Engagement weighs each
    account's like 1, repost 2, reply or quote 3, by trust, damped for accounts
    that like everything. Scores halve every 18 hours, or 36 or 72 when the

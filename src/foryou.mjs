@@ -26,7 +26,10 @@ export const C = {
   cap: { perAuthor: 20, inNetwork: 400, social: 300, trend: 50, socialSeeds: 60 },
   trust: { steps: 3, restart: 0.5, floor: 0.01, engaged: 0.3 },
   act: { like: 1, repost: 2, quote: 3, reply: 3 },
-  w: { affinity: 2.0, engagement: 1.5, trend: 0.5, mutual: 0.5 },
+  w: { affinity: 2.0, engagement: 1.5, trend: 0.5, mutual: 0.5, similar: 1.0 },
+  // "Because you liked": what else those who engaged with your recent posts
+  // engaged with, each by trust over the root of how much they engage.
+  similar: { seedPosts: 30, perAccount: 50, min: 0.15 },
   outOfNetwork: 0.75,
   reply: 0.75,
   seen: 0.3,
@@ -141,6 +144,39 @@ export function affinities(g, viewer, now) {
   return out;
 }
 
+/**
+ * Posts like those `viewer` engaged with lately: for each of the viewer's
+ * last few engagements, those who also engaged with it, and what else they
+ * engaged with, each such account counting its trust over the root of how
+ * much it engages (item-to-item, as Pixie and GraphJet walk it). Untrusted
+ * accounts count nothing. Map(key → { score, because: the viewer's post key }).
+ */
+export function similarTo(g, viewer, trust, { muted = new Set() } = {}) {
+  const S = C.similar;
+  const mine = g.engaged.get(viewer) ?? new Map();
+  const seeds = [...mine.keys()].map((k) => g.byKey.get(k)).filter(Boolean).sort((a, b) => b.at - a.at).slice(0, S.seedPosts);
+  const out = new Map();
+  for (const seed of seeds) {
+    const sk = keyOf(seed);
+    for (const [u] of g.engagers.get(sk) ?? []) {
+      const t = trust.get(u) ?? 0;
+      if (u === viewer || muted.has(u) || t === 0) continue;
+      const theirs = g.engaged.get(u);
+      const w = t / Math.sqrt(theirs.size);
+      let n = 0;
+      for (const k of theirs.keys()) {
+        if (k === sk || mine.has(k)) continue;
+        if (++n > S.perAccount) break;
+        const e = out.get(k) ?? { score: 0, because: sk, best: 0 };
+        e.score += w;
+        if (w > e.best) (e.best = w), (e.because = sk);
+        out.set(k, e);
+      }
+    }
+  }
+  return out;
+}
+
 /** The fatigue multiplier for an author the viewer marked "not interested" at `at`: 0.2, rising 0.2 every 35 days. */
 export function fatigue(at, now) {
   if (at === undefined) return 1;
@@ -152,7 +188,8 @@ export function fatigue(at, now) {
  * The viewer's For you page: `{ items, suggestions }`. Each item is
  * `{ post, key, score, inNetwork, seen, why, parts }`, `why` the reason it is
  * shown (`{ type: "liked" | "reposted" | "replied" | "quoted", actors }`,
- * `{ type: "network", n }`, `{ type: "trend" }` or `{ type: "popular" }`), or
+ * `{ type: "network", n }`, `{ type: "trend" }`, `{ type: "similar", because: post ref }`
+ * or `{ type: "popular" }`), or
  * null for a post by someone the viewer follows.
  *
  * `local` is the viewer's own feedback, kept on the device:
@@ -172,6 +209,7 @@ export function forYou(g, viewer, { local = {}, now = Date.now(), page = C.mix.p
   // Without trust, every engager counts once: "popular", gameable, and labeled so.
   const trustOf = (u) => (cold ? 1 : trust.get(u) ?? 0);
   const halfLife = halfLifeFor(g, direct, now, cold);
+  const similar = viewer && !cold ? similarTo(g, viewer, trust, { muted }) : new Map();
 
   // ---- candidates
   const cands = new Map(); // key → { post, sources }
@@ -189,6 +227,10 @@ export function forYou(g, viewer, { local = {}, now = Date.now(), page = C.mix.p
         const p = g.byKey.get(key);
         if (p.at >= since) add(p, "social");
       }
+    }
+    for (const [key, e] of similar) {
+      const p = g.byKey.get(key);
+      if (e.score >= C.similar.min && p.at >= since) add(p, "similar");
     }
     if (cold) for (const list of g.byAuthor.values()) for (const p of list.filter((p) => p.at >= since).slice(0, C.cap.perAuthor)) add(p, "popular");
     if (cands.size >= C.minPool) break;
@@ -217,14 +259,16 @@ export function forYou(g, viewer, { local = {}, now = Date.now(), page = C.mix.p
     const anyDirect = Object.values(directs).some((l) => l.length);
     const trend = Math.min(1, Math.max(0, n - 1) ** 2 / 25);
     // Outside the network, a post needs social proof from people the viewer trusts.
-    const eligible = cold || inNetwork || anyDirect || (n >= 2 && proof >= 0.5) || (n >= 3 && now - post.at < DAY);
+    const like = similar.get(key);
+    const sim = like && like.score >= C.similar.min ? Math.min(1, like.score) : 0;
+    const eligible = cold || inNetwork || anyDirect || sim > 0 || (n >= 2 && proof >= 0.5) || (n >= 3 && now - post.at < DAY);
     if (!eligible) continue;
     // A reply is half a conversation: it shows when you follow both sides (or
     // it answers you), or when someone you follow engaged with it; never cold.
     if (post.reply && !anyDirect && (cold || !inNetwork || !(direct.has(post.reply.author) || post.reply.author === viewer))) continue;
     const mutual = viewer && following(g, post.author).has(viewer) ? 1 : 0;
     const aff = affinity.get(post.author) ?? 0;
-    const value = 1 + C.w.affinity * aff + C.w.engagement * Math.log2(1 + E) + C.w.trend * trend + C.w.mutual * mutual;
+    const value = 1 + C.w.affinity * aff + C.w.engagement * Math.log2(1 + E) + C.w.trend * trend + C.w.mutual * mutual + C.w.similar * sim;
     const decay = 2 ** (-Math.max(0, now - post.at) / HOUR / halfLife);
     let m = decay;
     if (!inNetwork && !cold) m *= C.outOfNetwork;
@@ -238,8 +282,8 @@ export function forYou(g, viewer, { local = {}, now = Date.now(), page = C.mix.p
       score: value * m,
       inNetwork,
       seen: wasSeen,
-      why: reason({ inNetwork, cold, directs, n, trend }),
-      parts: { value, decay, affinity: aff, engagement: E, engagers: n, trend, mutual, halfLife },
+      why: reason({ inNetwork, cold, directs, n, trend, sim, because: like?.because && g.byKey.get(like.because) }),
+      parts: { value, decay, affinity: aff, engagement: E, engagers: n, trend, mutual, similar: sim, halfLife },
     });
   }
 
@@ -257,12 +301,13 @@ function halfLifeFor(g, direct, now, cold) {
   return recent >= 100 ? fast : recent >= 30 ? slow : slowest;
 }
 
-function reason({ inNetwork, cold, directs, n, trend }) {
+function reason({ inNetwork, cold, directs, n, trend, sim, because }) {
   for (const kind of ["reply", "quote", "repost", "like"]) {
     if (directs[kind].length) return { type: { reply: "replied", quote: "quoted", repost: "reposted", like: "liked" }[kind], actors: directs[kind] };
   }
   if (inNetwork) return null;
   if (cold) return n ? { type: "popular" } : { type: "new" };
+  if (sim > 0 && because) return { type: "similar", because: { author: because.author, id: because.id } };
   if (trend > 0 && n >= 3) return { type: "trend" };
   return { type: "network", n };
 }

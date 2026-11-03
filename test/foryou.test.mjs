@@ -204,3 +204,19 @@ test("a reply shows when you follow both sides, it answers you, or someone you f
   const cold = forYou(g, null, { now: NOW, page: 50 }).items;
   assert.equal(cold.some((i) => i.post.reply), false);
 });
+
+test("because you liked: what trusted people who liked the same post also liked; an untrusted co-liker adds nothing", () => {
+  const liked = post("zed", 30);
+  const alsoLiked = post("yan", 2);
+  const farmPick = post("spam", 2);
+  const g = index({
+    posts: [liked, alsoLiked, farmPick, post("ann", 1)],
+    likes: [like("me", liked), like("bob", liked), like("bob", alsoLiked), like("sybil", liked), like("sybil", farmPick)],
+    follows: [["me", "ann"], ["ann", "bob"]],
+  });
+  const { items } = forYou(g, "me", { now: NOW });
+  const shown = items.find((i) => i.key === keyOf(alsoLiked));
+  assert.ok(shown, "the co-liked post shows");
+  assert.deepEqual(shown.why, { type: "similar", because: { author: liked.author, id: liked.id } });
+  assert.equal(items.some((i) => i.key === keyOf(farmPick)), false);
+});
