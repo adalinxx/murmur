@@ -166,6 +166,20 @@ export async function postsBy(state, author, { limit = Infinity } = {}) {
   return posts.sort(newestFirst).slice(0, limit);
 }
 
+/**
+ * The posts `account` likes, those still there, newest post first (a like
+ * keeps no time of its own); at most `limit`.
+ */
+export async function likedBy(state, account, { limit = 100 } = {}) {
+  need(isAddress, "an account", account);
+  const refs = (await entries(state, `like/${account}/`, 2))
+    .map(({ parts: [author, id] }) => ({ author, id }))
+    .filter(({ author, id }) => isAddress(author) && isId(id))
+    .sort(newestFirst)
+    .slice(0, limit);
+  return (await Promise.all(refs.map(({ author, id }) => getPost(state, author, id)))).filter(Boolean);
+}
+
 /** The posts of all of `authors`, newest first: a timeline. At most `limit`. */
 export async function feed(state, authors, { limit = 100 } = {}) {
   const each = await Promise.all([...new Set(authors)].map((a) => postsBy(state, a, { limit })));

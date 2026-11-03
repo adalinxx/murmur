@@ -25,6 +25,11 @@ export function parseRoute(hash) {
     const who = parseWho(parts[0]);
     return who ? { view: "person", who } : { view: "missing" };
   }
+  // A tab's name is shorter than any post id, so the two never meet.
+  if (parts.length === 2 && PROFILE_TABS.includes(parts[1])) {
+    const who = parseWho(parts[0]);
+    return who ? { view: "person", who, tab: parts[1] } : { view: "missing" };
+  }
   if (parts.length === 2 && isAddress(parts[0]) && isId(parts[1])) return { view: "post", author: parts[0], id: parts[1] };
   return { view: "missing" };
 }
@@ -38,6 +43,8 @@ export function parseWho(text) {
 }
 
 export const postPath = ({ author, id }) => `#/${author}/${id}`;
+/** A profile's tabs past its first, Posts: `#/<who>/<tab>`. */
+export const PROFILE_TABS = ["replies", "media", "likes"];
 export const personPath = (account, handle) => `#/${handle ? `@${handle}` : account}`;
 
 const esc = (text) => String(text).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);

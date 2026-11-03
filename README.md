@@ -134,6 +134,10 @@ one, and when you last looked, to light the bell. Muted accounts are left out.
 - **Home:** For you, ranked for you (above); Following, your posts and those
   of everyone you follow on Follows, newest first; and Everyone, every post on
   the chain.
+  50 at a time (For you 30), with Show more; a "New posts" button appears when
+  someone the timeline shows has posted since, checked once a minute.
+- **Profiles:** Posts (without replies), Replies, Media and Likes, at
+  `#/<who>`, `#/<who>/replies`, `#/<who>/media` and `#/<who>/likes`.
 - **A person's page** (`#/@handle` or `#/<account>`): their card, Follows
   counts, a Follow button, and their posts.
 - **A post's page** (`#/<account>/<id>`): the thread above it, and its

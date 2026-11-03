@@ -27,7 +27,7 @@ import { defineHandlePicker } from "./vendor/moniker-sdk/src/picker.mjs";
 import { accountIcon, shortAccount } from "./vendor/moniker-sdk/src/records/account.mjs";
 import { selfhold } from "./vendor/selfhold.mjs";
 import { hasher, workDevice } from "./vendor/work/hash.mjs";
-import { ago, count, esc, left, parseRoute, parseWho, personPath, postPath, renderText, when } from "./lib.mjs";
+import { ago, count, esc, left, parseRoute, PROFILE_TABS, parseWho, personPath, postPath, renderText, when } from "./lib.mjs";
 
 const params = new URLSearchParams(location.search);
 const list = (name) => params.get(name)?.split(",").filter(Boolean);
@@ -245,12 +245,13 @@ async function render() {
     return true;
   };
   main.setAttribute("aria-busy", "true");
+  if (!["home", "following", "everyone"].includes(route.view)) (timeline = null), (pill.hidden = true);
   try {
     if (route.view === "home") await home(draw, "foryou");
     else if (route.view === "following") await home(draw, me ? "following" : "foryou");
     else if (route.view === "everyone") await home(draw, "everyone");
     else if (route.view === "notifications") await notificationsPage(draw);
-    else if (route.view === "person") await person(draw, route.who);
+    else if (route.view === "person") await person(draw, route.who, route.tab);
     else if (route.view === "post") await postPage(draw, route);
     else draw(`<p class="status">Nothing is here. <a href="#/">Go home</a>.</p>`);
   } catch (error) {
@@ -403,6 +404,32 @@ async function keepPicture(key, item) {
   redrawAttached(key);
 }
 
+// How many pages of a timeline show, until the route changes; and what the
+// shown timeline holds, to tell when there are newer posts than it.
+let pages = { view: null, n: 1 };
+let timeline = null; // { newest: post id, authors: Set | null (everyone) }
+const pagesOf = (view) => (pages.view === view ? pages.n : ((pages = { view, n: 1 }), 1));
+const moreButton = (shown, total) => (shown < total ? `<div class="more"><button class="secondary" data-act="show-more">Show more</button></div>` : "");
+function watching(posts, authors) {
+  const newest = posts.reduce((n, p) => (p.id > n ? p.id : n), "");
+  timeline = { newest, authors };
+  pill.hidden = true;
+}
+
+const pill = Object.assign(document.createElement("button"), { className: "new-posts", hidden: true, textContent: "↑ New posts" });
+pill.dataset.act = "new-posts";
+document.body.append(pill);
+/** Once a minute, while a timeline shows: are there posts newer than it, from whom it shows? */
+setInterval(async () => {
+  const view = parseRoute(location.hash).view;
+  if (!timeline || document.hidden || !["home", "following", "everyone"].includes(view) || !pill.hidden) return;
+  try {
+    const latest = await murmur.everyone({ limit: 20 });
+    const fresh = latest.filter((p) => p.id > timeline.newest && p.author !== me && (!timeline.authors || timeline.authors.has(p.author)) && !mutedSet().has(p.author));
+    pill.hidden = fresh.length === 0;
+  } catch {}
+}, 60_000);
+
 async function home(draw, view) {
   const tab = (href, label, v) => `<a href="${href}" ${view === v ? 'aria-current="page"' : ""}>${label}</a>`;
   const tabs = `<nav class="tabs" aria-label="Timelines">${tab("#/", "For you", "foryou")}${me ? tab("#/following", "Following", "following") : ""}${tab("#/everyone", "Everyone", "everyone")}</nav>`;
@@ -416,17 +443,21 @@ async function home(draw, view) {
   const muted = mutedSet();
   let posts;
   let following = [];
+  const limit = 50 * pagesOf(view);
   if (view === "everyone") {
-    posts = await murmur.everyone({ limit: 100 });
+    posts = await murmur.everyone({ limit: limit + 1 });
   } else {
     following = await graph.followingAccounts(me).catch(() => []);
-    posts = await murmur.feed([me, ...following], { limit: 100 });
+    posts = await murmur.feed([me, ...following], { limit: limit + 1 });
   }
+  const more = moreButton(limit, posts.length);
+  posts = posts.slice(0, limit);
+  watching(posts, view === "everyone" ? null : new Set([me, ...following]));
   const html = await renderPosts(posts.filter((p) => !muted.has(p.author)));
   if (view === "following" && following.length === 0) {
     return draw(`${top()}<p class="status muted">You follow nobody yet. Find people on <a href="#/">For you</a> or <a href="#/everyone">Everyone</a>, then follow them from their page.</p><ul class="posts">${html}</ul>`);
   }
-  draw(`${top()}${html ? `<ul class="posts">${html}</ul>` : `<p class="status muted">No posts yet. Be the first.</p>`}`);
+  draw(`${top()}${html ? `<ul class="posts">${html}</ul>${more}` : `<p class="status muted">No posts yet. Be the first.</p>`}`);
 }
 
 // ---------------------------------------------------------------- notifications
@@ -571,7 +602,9 @@ async function forYouPage(draw, top) {
   const g = rank.index({ ...snapshot, follows });
   const saved = feedback.load();
   seenBefore ??= new Set(Object.keys(saved.seen));
+  const page = rank.C.mix.page * pagesOf("foryou");
   const { items, suggestions } = rank.forYou(g, me, {
+    page: page + 1,
     local: {
       seen: seenBefore,
       hidden: new Set(Object.keys(saved.hidden)),
@@ -579,6 +612,10 @@ async function forYouPage(draw, top) {
       notInterested: new Map(Object.entries(saved.notInterested)),
     },
   });
+  const more = moreButton(page, items.length);
+  items.splice(page);
+  const followed = g.followsOf.get(me);
+  watching(items.map((i) => i.post), followed?.size ? new Set([me, ...followed]) : null);
   const now = Date.now();
   feedback.update((v) => items.forEach((i) => (v.seen[i.key] ??= now)));
   const cold = !me || !g.followsOf.get(me)?.size;
@@ -594,7 +631,8 @@ async function forYouPage(draw, top) {
     ${first ? `<ul class="posts">${first}</ul>` : ""}
     ${suggest}
     ${rest ? `<ul class="posts">${rest}</ul>` : ""}
-    ${seen ? `<p class="caught-up muted small">${fresh.length ? "You're caught up. Seen before:" : "Nothing new since you last looked. Seen before:"}</p><ul class="posts">${seen}</ul>` : ""}`);
+    ${seen ? `<p class="caught-up muted small">${fresh.length ? "You're caught up. Seen before:" : "Nothing new since you last looked. Seen before:"}</p><ul class="posts">${seen}</ul>` : ""}
+    ${more}`);
 }
 
 /** A person's name as a link, for a line of text. */
@@ -634,7 +672,7 @@ async function suggestionsHTML(list) {
   return `<section class="suggest" aria-labelledby="suggest-title"><h2 id="suggest-title">Who to follow</h2><ul>${rows.join("")}</ul></section>`;
 }
 
-async function person(draw, who) {
+async function person(draw, who, tab = "posts") {
   const found = await graph.person(who.account ?? `@${who.handle}`);
   if (!found.account) return draw(`<p class="status">Nobody shows @${esc(who.handle)} now. <a href="${MONIKER_APP}">It may be free on Moniker.</a></p>`);
   const account = found.account;
@@ -643,7 +681,7 @@ async function person(draw, who) {
     handleOf(account),
     cardOf(account),
     graph.counts(account).catch(() => undefined),
-    murmur.postsBy(account, { limit: 100 }),
+    tab === "likes" ? murmur.likedBy(account, { limit: 100 }) : murmur.postsBy(account, { limit: tab === "posts" ? 300 : 500 }),
     me && me !== account ? graph.follows(me, account).catch(() => false) : false,
   ]);
   const self = account === me;
@@ -651,7 +689,19 @@ async function person(draw, who) {
   const actions = self
     ? `<button class="secondary" data-act="edit-card">Edit profile</button>${handle ? "" : `<button class="secondary" data-act="pick-handle">Choose a @handle</button>`}`
     : `${mutedSet().has(account) ? `<button class="secondary" data-act="unmute" data-who="${account}">Unmute</button>` : ""}<button data-act="${following ? "unfollow" : "follow"}" data-who="${account}" aria-pressed="${following}">${following ? "Following" : "Follow"}</button>`;
-  const html = await renderPosts(posts);
+  // Posts leaves out replies, as X does; Replies is everything; Media, posts with pictures.
+  const shown = {
+    posts: posts.filter((p) => !p.reply).slice(0, 100),
+    replies: posts.slice(0, 100),
+    media: posts.filter((p) => p.media?.length).slice(0, 100),
+    likes: posts,
+  }[tab].filter((p) => tab !== "likes" || !mutedSet().has(p.author));
+  const html = await renderPosts(shown);
+  const base = personPath(account, handle);
+  const tabs = `<nav class="tabs" aria-label="${esc(name ?? handle ?? "Their")} posts">${[["posts", "Posts"], ...PROFILE_TABS.map((t) => [t, t[0].toUpperCase() + t.slice(1)])]
+    .map(([t, label]) => `<a href="${t === "posts" ? base : `${base}/${t}`}" ${t === tab ? 'aria-current="page"' : ""}>${label}</a>`)
+    .join("")}</nav>`;
+  const none = { posts: "No posts yet.", replies: "No posts or replies yet.", media: "No pictures yet.", likes: "No likes yet." }[tab];
   draw(`
     <section class="profile">
       ${avatar(account, 72)}
@@ -663,8 +713,9 @@ async function person(draw, who) {
       </div>
       <div class="profile-actions">${actions}</div>
     </section>
-    ${self ? pendingList() : ""}
-    ${html ? `<ul class="posts">${html}</ul>` : `<p class="status muted">No posts yet.</p>`}`);
+    ${tabs}
+    ${self && tab === "posts" ? pendingList() : ""}
+    ${html ? `<ul class="posts">${html}</ul>` : `<p class="status muted">${none}</p>`}`);
 }
 
 async function postPage(draw, to) {
@@ -788,6 +839,18 @@ async function act(button) {
     case "connect":
       return connect();
     case "retry":
+      return render();
+    case "show-more": {
+      pages.n += 1;
+      const y = scrollY;
+      await render();
+      return scrollTo(0, y);
+    }
+    case "new-posts":
+      // Seen-before stays as this visit had it, so the new posts come first.
+      seenBefore = null;
+      pill.hidden = true;
+      scrollTo({ top: 0, behavior: "smooth" });
       return render();
     case "reply":
       return me ? openComposer({ reply: to }) : connect();

@@ -201,3 +201,14 @@ test("snapshot: every post and like on the chain, in two prefix reads, for ranki
   assert.ok(posts.some((p) => p.repost?.id === first.id));
   assert.deepEqual(likes, [{ account: CAROL, author: ALICE, id: first.id }]);
 });
+
+test("likedBy: the posts an account likes, newest post first, leaving out deleted ones", async () => {
+  const { state, ok } = chain();
+  const older = ok(ALICE, m.compose(ALICE, { text: "older" }, at()));
+  const newer = ok(BOB, m.compose(BOB, { text: "newer" }, at()));
+  const gone = ok(BOB, m.compose(BOB, { text: "gone" }, at()));
+  for (const [author, p] of [[ALICE, older], [BOB, newer], [BOB, gone]]) ok(CAROL, await m.like(state, CAROL, { author, id: p.id }));
+  ok(BOB, await m.remove(state, BOB, gone.id));
+  assert.deepEqual((await m.likedBy(state, CAROL)).map((p) => p.text), ["newer", "older"]);
+  assert.deepEqual(await m.likedBy(state, ALICE), []);
+});

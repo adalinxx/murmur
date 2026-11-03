@@ -71,6 +71,7 @@ export function createMurmur(options) {
 
     post: async ({ author, id }) => records.getPost(await state(), author, id),
     postsBy: async (author, options) => records.postsBy(await state(), author, options),
+    likedBy: async (account, options) => records.likedBy(await state(), account, options),
     feed: async (authors, options) => records.feed(await state(), authors, options),
     everyone: async (options) => records.everyone(await state(), options),
     thread: async (to, options) => records.thread(await state(), to, options),
