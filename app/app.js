@@ -714,11 +714,25 @@ async function suggestionsHTML(list) {
   return `<section class="suggest" aria-labelledby="suggest-title"><h2 id="suggest-title">Who to follow</h2><ul>${rows.join("")}</ul></section>`;
 }
 
+// Who a @handle is, for its profile: Moniker read as it is. Names in a feed give up
+// after 8 s and show accounts instead; a profile can't, since a Moniker that didn't
+// answer isn't one saying nobody shows the handle. A cold read walks Moniker's state
+// a level a request, so it's waited for longer, and apart from the feed's rest.
+const LOOKUP_MS = 25_000;
+const exactNames = { pointers: (hs) => Promise.all(hs.map((h) => moniker.pointer(h))), handlesOf: (as) => moniker.handlesOf(as) };
+const whoIs = (handle) => Promise.race([
+  followRecords.person(exactNames, `@${handle}`),
+  new Promise((_, reject) => setTimeout(() => reject(new Error(`Moniker took too long to say who @${handle} is`)), LOOKUP_MS)),
+]);
+
 async function person(draw, who, tab = "posts") {
-  const found = await within(graph.person(who.account ?? `@${who.handle}`), 8_000, who.account ? { account: who.account } : null);
-  if (!found) throw new Error(`no host answered who @${who.handle} is`);
+  // Arriving, say it's looking; redrawn in place (a like landing, a mute), keep the profile and where they were.
+  if (!who.account && !main.querySelector(`.profile[data-handle="${CSS.escape(who.handle)}"]`)) draw(`<p class="status">Looking up @${esc(who.handle)}…</p>`);
+  const found = who.account ? await within(graph.person(who.account), 8_000, { account: who.account }) : await whoIs(who.handle);
   if (!found.account) return draw(`<p class="status">Nobody shows @${esc(who.handle)} now. <a href="${MONIKER_APP}">It may be free on Moniker.</a></p>`);
   const account = found.account;
+  // The handle Moniker just answered, over any the feed's reads gave up on.
+  if (found.handle) handles.set(account, Promise.resolve(found.handle));
   await know([account]);
   const [handle, card, counts, posts, following] = await Promise.all([
     handleOf(account),
@@ -746,7 +760,7 @@ async function person(draw, who, tab = "posts") {
     .join("")}</nav>`;
   const none = { posts: "No posts yet.", replies: "No posts or replies yet.", media: "No pictures yet.", likes: "No likes yet." }[tab];
   draw(`
-    <section class="profile">
+    <section class="profile"${handle ? ` data-handle="${esc(handle)}"` : ""}>
       ${avatar(account, 72)}
       <div class="who">
         <h1 tabindex="-1">${esc(name ?? (handle ? `@${handle}` : shortAccount(account)))}</h1>
