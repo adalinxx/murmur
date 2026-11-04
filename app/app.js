@@ -726,10 +726,13 @@ const whoIs = (handle) => Promise.race([
 ]);
 
 async function person(draw, who, tab = "posts") {
-  if (!who.account) draw(`<p class="status">Looking up @${esc(who.handle)}…</p>`);
+  // Arriving, say it's looking; redrawn in place (a like landing, a mute), keep the profile and where they were.
+  if (!who.account && !main.querySelector(`.profile[data-handle="${CSS.escape(who.handle)}"]`)) draw(`<p class="status">Looking up @${esc(who.handle)}…</p>`);
   const found = who.account ? await within(graph.person(who.account), 8_000, { account: who.account }) : await whoIs(who.handle);
   if (!found.account) return draw(`<p class="status">Nobody shows @${esc(who.handle)} now. <a href="${MONIKER_APP}">It may be free on Moniker.</a></p>`);
   const account = found.account;
+  // The handle Moniker just answered, over any the feed's reads gave up on.
+  if (found.handle) handles.set(account, Promise.resolve(found.handle));
   await know([account]);
   const [handle, card, counts, posts, following] = await Promise.all([
     handleOf(account),
@@ -757,7 +760,7 @@ async function person(draw, who, tab = "posts") {
     .join("")}</nav>`;
   const none = { posts: "No posts yet.", replies: "No posts or replies yet.", media: "No pictures yet.", likes: "No likes yet." }[tab];
   draw(`
-    <section class="profile">
+    <section class="profile"${handle ? ` data-handle="${esc(handle)}"` : ""}>
       ${avatar(account, 72)}
       <div class="who">
         <h1 tabindex="-1">${esc(name ?? (handle ? `@${handle}` : shortAccount(account)))}</h1>
