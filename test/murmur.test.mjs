@@ -88,6 +88,8 @@ test("a thread: replies listed under their post, and the posts above", async () 
   ok(ALICE, await m.remove(state, ALICE, root.id));
   assert.deepEqual((await m.thread(state, { author: BOB, id: r1.id })).above, [{ author: ALICE, id: root.id, missing: true }]);
   assert.equal(await m.thread(state, { author: ALICE, id: root.id }), undefined);
+  // Its replies are still listed under it.
+  assert.deepEqual((await m.pointing(state, "reply", { author: ALICE, id: root.id })).map((p) => p.text), ["r1", "another"]);
 });
 
 test("a listed pointer counts only while its post points there", async () => {
