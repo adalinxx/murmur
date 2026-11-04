@@ -72,6 +72,8 @@ export function createMurmur(options) {
     feed: async (authors, options) => records.feed(await state(), authors, options),
     everyone: async (options) => records.everyone(await state(), options),
     thread: async (to, options) => records.thread(await state(), to, options),
+    /** The replies to `to`, oldest first, whether or not `to` is still there. */
+    replies: async (to) => records.pointing(await state(), "reply", to),
     stats: async (to, reader) => records.stats(await state(), to, reader),
     card: async (account) => records.card(await state(), account),
     /** Every post and like, `{ posts, likes }`, for ranking with `rank.index` and `rank.forYou`. */

@@ -181,6 +181,7 @@ await murmur.feed([me, ...following]);                // newest first
 await murmur.postsBy(address);
 await murmur.everyone();
 await murmur.thread({ author, id });                  // { above, post, replies }
+await murmur.replies({ author, id });                 // oldest first, even once the post is deleted
 await murmur.stats({ author, id }, me);               // { replies, reposts, quotes, likes, liked, reposted }
 await murmur.card(address);                           // { name?, bio? }
 await murmur.media(cid);                              // { type, bytes }, checked against the CID

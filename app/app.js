@@ -106,6 +106,12 @@ async function byline(account) {
   return `<a class="name" href="${href}"><strong>${esc(primary)}</strong>${secondary ? ` <span class="muted">${esc(secondary)}</span>` : ""}</a>`;
 }
 
+/** How a post names someone in a line: their @handle, else their card's name, else a short account ID. */
+async function shortName(account) {
+  const [handle, card] = await Promise.all([handleOf(account), cardOf(account)]);
+  return handle ? `@${handle}` : card?.name?.replace(/[@＠﹫]/g, "") || shortAccount(account);
+}
+
 // ---------------------------------------------------------------- posts
 
 /** The posts each of `posts` shows inside it, read once: reposted and quoted posts, by `author/id`. */
@@ -134,9 +140,19 @@ async function renderPosts(posts, { focus, headers } = {}) {
   return items.join("");
 }
 
+/** Each of `replies` under the post it answers. */
+async function renderReplies(replies) {
+  const parents = await Promise.all(replies.map((r) => murmur.post(r.reply).catch(() => undefined)));
+  const pairs = await Promise.all(replies.map(async (reply, i) => {
+    const above = parents[i] ? await renderPosts([parents[i]]) : `<li class="post gone"><p class="muted small">Replying to a post that was deleted.</p></li>`;
+    return `<li class="exchange"><ul class="posts thread">${above}</ul><ul class="posts">${await renderPosts([reply])}</ul></li>`;
+  }));
+  return pairs.join("");
+}
+
 async function postItem(post, { header = "", nested, focus = false }) {
   const quoted = post.quote && nested?.get(`${post.quote.author}/${post.quote.id}`);
-  const replyTo = post.reply ? `<p class="muted small replying">Replying to <a href="${postPath(post.reply)}">${esc((await handleOf(post.reply.author)) ? `@${await handleOf(post.reply.author)}` : shortAccount(post.reply.author))}</a></p>` : "";
+  const replyTo = post.reply ? `<p class="muted small replying">Replying to <a href="${postPath(post.reply)}">${esc(await shortName(post.reply.author))}</a></p>` : "";
   const quote = !post.quote
     ? ""
     : quoted
@@ -165,11 +181,20 @@ async function postItem(post, { header = "", nested, focus = false }) {
   </li>`;
 }
 
+/** How many of your replies to `to` were sent and aren't on the chain yet. */
+async function unseenReplies(to) {
+  const sent = pending.filter((p) => answers(p, to));
+  if (!sent.length) return 0;
+  const there = new Set((await murmur.replies(to)).map((p) => p.id));
+  return sent.filter((p) => !there.has(p.id)).length;
+}
+
 /** Fills each shown post's counts, and whether you liked or reposted it, as they arrive. */
 function fillStats(root) {
   for (const li of root.querySelectorAll("li.post[data-id]")) {
     const to = { author: li.dataset.author, id: li.dataset.id };
-    murmur.stats(to, me ?? undefined).then((s) => {
+    Promise.all([murmur.stats(to, me ?? undefined), unseenReplies(to)]).then(([s, unseen]) => {
+      s.replies += unseen;
       for (const [n, value] of Object.entries(s)) {
         const span = li.querySelector(`[data-n="${n}"]`);
         if (span) span.textContent = count(value);
@@ -279,11 +304,11 @@ async function render() {
 const drafts = new Map(); // key → { text, media: [{ id, url, type?, cid?, volume?, alt, state, note, stop? }] }
 const draftOf = (key) => drafts.get(key) ?? drafts.set(key, { text: "", media: [] }).get(key);
 
-function composer(key, placeholder = "What's happening?") {
+function composer(key, placeholder = "What's happening?", { where = "page" } = {}) {
   const draft = draftOf(key);
   const [kind, to] = key.split(":");
   const points = kind === "reply" ? ` data-reply="${to}"` : kind === "quote" ? ` data-quote="${to}"` : "";
-  const id = `draft-${key.replace(/[^a-z0-9]/gi, "-")}`;
+  const id = `${where}-draft-${key.replace(/[^a-z0-9]/gi, "-")}`;
   return `
   <form class="compose" data-compose="${esc(key)}"${points}>
     ${avatar(me)}
@@ -293,7 +318,7 @@ function composer(key, placeholder = "What's happening?") {
       <ul class="attached" data-attached>${attachedHTML(draft)}</ul>
       <div class="compose-foot">
         <label class="act add-media" title="Add pictures">${icon("picture")}<span class="sr">Add pictures</span><input type="file" class="sr" data-pick multiple accept="${m.MEDIA_TYPES.join(",")}"></label>
-        <span class="left muted small" aria-live="polite">${left(draft.text)}</span><button type="submit"${ready(draft) ? "" : " disabled"}>Post</button>
+        <span class="left muted small" aria-live="polite">${left(draft.text)}</span><button type="submit"${ready(draft) && !sending.has(key) ? "" : " disabled"}>Post</button>
       </div>
     </div>
   </form>`;
@@ -746,19 +771,19 @@ async function person(draw, who, tab = "posts") {
   const actions = self
     ? `<button class="secondary" data-act="edit-card">Edit profile</button>${handle ? "" : `<button class="secondary" data-act="pick-handle">Choose a @handle</button>`}`
     : `${mutedSet().has(account) ? `<button class="secondary" data-act="unmute" data-who="${account}">Unmute</button>` : ""}<button data-act="${following ? "unfollow" : "follow"}" data-who="${account}" aria-pressed="${following}">${following ? "Following" : "Follow"}</button>`;
-  // Posts leaves out replies, as X does; Replies is everything; Media, posts with pictures.
+  // Posts leaves out replies; Replies, each under the post it answers; Media, posts with pictures.
   const shown = {
     posts: posts.filter((p) => !p.reply).slice(0, 100),
-    replies: posts.slice(0, 100),
+    replies: posts.filter((p) => p.reply).slice(0, 100),
     media: posts.filter((p) => p.media?.length).slice(0, 100),
     likes: posts,
   }[tab].filter((p) => tab !== "likes" || !mutedSet().has(p.author));
-  const html = await renderPosts(shown);
+  const html = tab === "replies" ? await renderReplies(shown) : await renderPosts(shown);
   const base = personPath(account, handle);
   const tabs = `<nav class="tabs" aria-label="${esc(name ?? handle ?? "Their")} posts">${[["posts", "Posts"], ...PROFILE_TABS.map((t) => [t, t[0].toUpperCase() + t.slice(1)])]
     .map(([t, label]) => `<a href="${t === "posts" ? base : `${base}/${t}`}" ${t === tab ? 'aria-current="page"' : ""}>${label}</a>`)
     .join("")}</nav>`;
-  const none = { posts: "No posts yet.", replies: "No posts or replies yet.", media: "No pictures yet.", likes: "No likes yet." }[tab];
+  const none = { posts: "No posts yet.", replies: "No replies yet.", media: "No pictures yet.", likes: "No likes yet." }[tab];
   draw(`
     <section class="profile"${handle ? ` data-handle="${esc(handle)}"` : ""}>
       ${avatar(account, 72)}
@@ -771,31 +796,41 @@ async function person(draw, who, tab = "posts") {
       <div class="profile-actions">${actions}</div>
     </section>
     ${tabs}
-    ${self && tab === "posts" ? pendingList() : ""}
+    ${self && tab === "posts" ? pendingList() : self && tab === "replies" ? pendingList((p) => Boolean(p.reply)) : ""}
     ${html ? `<ul class="posts">${html}</ul>` : `<p class="status muted">${none}</p>`}`);
 }
 
 async function postPage(draw, to) {
   const thread = await murmur.thread(to);
-  if (!thread) return draw(`<p class="status">This post was deleted, or never was. <a href="#/">Go home</a>.</p>`);
+  if (!thread) {
+    // Its replies are still there, and still answer it.
+    const repliesHTML = await renderPosts((await murmur.replies(to)).filter((p) => !mutedSet().has(p.author)));
+    return draw(`<p class="status">This post was deleted, or never was. <a href="#/">Go home</a>.</p>${repliesHTML ? `<ul class="posts">${repliesHTML}</ul>` : ""}`);
+  }
   const above = thread.above.filter((p) => !p.missing);
-  const gap = thread.above.some((p) => p.missing) ? `<p class="status muted small">An earlier post in this thread was deleted.</p>` : "";
+  const top = thread.above[0];
+  const gap = top?.missing
+    ? `<p class="status muted small">An earlier post in this thread was deleted.</p>`
+    : top?.reply ? `<p class="status small"><a href="${postPath(top.reply)}">Earlier posts in this thread</a></p>` : "";
+  const muted = thread.replies.filter((p) => mutedSet().has(p.author)).length;
   const [aboveHTML, focusHTML, repliesHTML] = await Promise.all([renderPosts(above), renderPosts([thread.post], { focus: to }), renderPosts(thread.replies.filter((p) => !mutedSet().has(p.author)))]);
   draw(`
     <a class="back" href="#/">← Home</a>
     ${gap}
     <ul class="posts thread">${aboveHTML}${focusHTML}</ul>
     ${me ? composer(`reply:${to.author}/${to.id}`, "Post your reply") : `<p class="status"><button data-act="connect">Connect to reply</button></p>`}
-    ${pendingList(to)}
-    ${repliesHTML ? `<ul class="posts">${repliesHTML}</ul>` : ""}`);
+    ${pendingList((p) => answers(p, to))}
+    ${repliesHTML ? `<ul class="posts">${repliesHTML}</ul>` : ""}
+    ${muted ? `<p class="status muted small">${muted === 1 ? "A reply from someone you muted isn't shown." : `${muted} replies from people you muted aren't shown.`}</p>` : ""}`);
 }
 
 // ---------------------------------------------------------------- writing
 
+const answers = (post, to) => post.reply?.author === to.author && post.reply?.id === to.id;
 /** Posts sent and not yet seen on the chain, newest first: { author, id, text, reply?, quote? }. */
 const pending = [];
-function pendingList(replyTo) {
-  const shown = pending.filter((p) => (replyTo ? p.reply?.author === replyTo.author && p.reply?.id === replyTo.id : !p.reply));
+function pendingList(shows = (p) => !p.reply) {
+  const shown = pending.filter(shows);
   if (!shown.length) return "";
   return `<ul class="posts pending">${shown.map((p) => `<li class="post"><div class="row">${avatar(p.author)}<div class="body"><p class="meta muted small">Saving… about a minute</p>${p.text ? `<p class="text">${renderText(p.text)}</p>` : ""}${p.urls?.length ? `<div class="media n${p.urls.length}">${p.urls.map((url) => `<span class="pic"><img src="${url}" alt=""></span>`).join("")}</div>` : ""}</div></div></li>`).join("")}</ul>`;
 }
@@ -856,10 +891,12 @@ async function writing(label, write) {
   }
 }
 
+/** The drafts being sent now, by key. */
+const sending = new Set();
 async function post(form) {
   const key = form.dataset.compose;
   const saved = draftOf(key);
-  if (!ready(saved)) return false;
+  if (!ready(saved) || sending.has(key)) return false;
   const [author, id] = form.dataset.reply?.split("/") ?? [];
   const quoteOf = form.dataset.quote?.split("/");
   const media = saved.media.map(({ cid, type, alt }) => ({ cid, type, ...(alt.trim() && { alt }) }));
@@ -869,13 +906,19 @@ async function post(form) {
   } catch (error) {
     return say(error.message, { error: true });
   }
+  sending.add(key);
   form.querySelector("button[type=submit]").disabled = true;
-  let posted;
-  const ok = await writing("Posted.", async (how) => {
-    posted = await murmur.compose(draft, how);
-    return posted.sent;
-  });
-  form.querySelector("button[type=submit]").disabled = false;
+  let posted, ok;
+  try {
+    ok = await writing("Posted.", async (how) => {
+      posted = await murmur.compose(draft, how);
+      return posted.sent;
+    });
+  } finally {
+    sending.delete(key);
+  }
+  // A redraw while it was sent may have replaced this form: the ones shown now are updated.
+  for (const shown of document.querySelectorAll(`form[data-compose="${CSS.escape(key)}"]`)) shown.querySelector("button[type=submit]").disabled = !ready(draftOf(key));
   if (!ok) return false;
   drafts.delete(key);
   form.elements.text.value = "";
@@ -1034,7 +1077,7 @@ async function openComposer({ reply, quote }) {
   dialog.innerHTML = `
     <form method="dialog" class="dialog-head"><h2>${reply ? "Reply" : "Quote"}</h2><button class="secondary" value="cancel" aria-label="Close">Close</button></form>
     ${reply ? `<ul class="posts quoted-in-dialog">${shown}</ul>` : ""}
-    ${composer(`${reply ? "reply" : "quote"}:${to.author}/${to.id}`, reply ? "Post your reply" : "Add a comment")}
+    ${composer(`${reply ? "reply" : "quote"}:${to.author}/${to.id}`, reply ? "Post your reply" : "Add a comment", { where: "dialog" })}
     ${quote ? `<ul class="posts quoted-in-dialog">${shown}</ul>` : ""}`;
   dialog.querySelectorAll(".actions").forEach((a) => a.remove());
   fillMedia(dialog);
