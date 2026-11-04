@@ -714,9 +714,20 @@ async function suggestionsHTML(list) {
   return `<section class="suggest" aria-labelledby="suggest-title"><h2 id="suggest-title">Who to follow</h2><ul>${rows.join("")}</ul></section>`;
 }
 
+// Who a @handle is, for its profile: Moniker read as it is. Names in a feed give up
+// after 8 s and show accounts instead; a profile can't, since a Moniker that didn't
+// answer isn't one saying nobody shows the handle. A cold read walks Moniker's state
+// a level a request, so it's waited for longer, and apart from the feed's rest.
+const LOOKUP_MS = 25_000;
+const exactNames = { pointers: (hs) => Promise.all(hs.map((h) => moniker.pointer(h))), handlesOf: (as) => moniker.handlesOf(as) };
+const whoIs = (handle) => Promise.race([
+  followRecords.person(exactNames, `@${handle}`),
+  new Promise((_, reject) => setTimeout(() => reject(new Error(`Moniker took too long to say who @${handle} is`)), LOOKUP_MS)),
+]);
+
 async function person(draw, who, tab = "posts") {
-  const found = await within(graph.person(who.account ?? `@${who.handle}`), 8_000, who.account ? { account: who.account } : null);
-  if (!found) throw new Error(`no host answered who @${who.handle} is`);
+  if (!who.account) draw(`<p class="status">Looking up @${esc(who.handle)}…</p>`);
+  const found = who.account ? await within(graph.person(who.account), 8_000, { account: who.account }) : await whoIs(who.handle);
   if (!found.account) return draw(`<p class="status">Nobody shows @${esc(who.handle)} now. <a href="${MONIKER_APP}">It may be free on Moniker.</a></p>`);
   const account = found.account;
   await know([account]);
