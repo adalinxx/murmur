@@ -1,6 +1,7 @@
 // The page's pure parts: routes, how text and times are shown, and who a
 // search names. Nothing here reads a chain.
 import { isAddress, isId } from "../src/records/murmur.mjs";
+import { displayName } from "./vendor/moniker-sdk/src/records/names.mjs";
 
 const isHandle = (text) => typeof text === "string" && /^[a-z0-9_]+$/.test(text);
 
@@ -98,18 +99,17 @@ export const count = (n) => (n > 0 ? n.toLocaleString("en-US") : "");
 export const left = (text, max = 280) => max - [...String(text)].length;
 
 /**
- * What shows for a person: their Murmur card's name and bio (no @ of its
- * own), and where it leaves one out, their Moniker card's; with the Moniker
- * card's photo, website and links. Moniker reads its cards (readCard), so
- * what comes from it is already checked.
+ * What shows for a person: their Murmur card's name (cleaned as Moniker
+ * cleans names: no @, no invisible controls) and bio, and where it leaves one
+ * out, their Moniker card's; with the Moniker card's website and links.
+ * Moniker reads its cards (readCard), so what comes from it is already checked.
  */
 export function shownCard(own = {}, moniker = {}) {
-  const name = own.name?.replace(/[@＠﹫]/g, "").trim() || moniker.name;
+  const name = displayName(own.name) ?? moniker.name;
   const bio = own.bio?.trim() || moniker.description;
   return {
     ...(name && { name }),
     ...(bio && { bio }),
-    ...(moniker.avatar && { photo: moniker.avatar }),
     ...(moniker.url && { url: moniker.url }),
     ...(moniker.links && { links: moniker.links }),
   };

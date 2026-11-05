@@ -48,10 +48,11 @@ const moniker = createMoniker({ sdk, app: MONIKER_APP, ...(path("moniker") && { 
 let monikerRestsUntil = 0;
 const late = (read, fallback) => {
   if (Date.now() < monikerRestsUntil) return Promise.resolve(fallback);
+  let timer;
   return Promise.race([
     read().catch(() => fallback),
-    new Promise((resolve) => setTimeout(() => ((monikerRestsUntil = Date.now() + 60_000), resolve(fallback)), 8_000)),
-  ]);
+    new Promise((resolve) => (timer = setTimeout(() => ((monikerRestsUntil = Date.now() + 60_000), resolve(fallback)), 8_000))),
+  ]).finally(() => clearTimeout(timer));
 };
 const names = {
   state: (options) => late(() => moniker.state(options), null),
@@ -98,7 +99,7 @@ async function know(accounts) {
     const all = names.handlesOf(fresh);
     fresh.forEach((a, i) => handles.set(a, all.then((h) => h[i])));
   }
-  for (const a of accounts) if (!cards.has(a)) cards.set(a, Promise.all([murmur.card(a).catch(() => ({})), monikerCardOf(a)]).then(([own, card]) => shownCard(own, card)));
+  for (const a of accounts) if (!cards.has(a) || unread.delete(a)) cards.set(a, Promise.all([murmur.card(a).catch(() => ({})), monikerCardOf(a)]).then(([own, card]) => shownCard(own, card)));
   await Promise.all(accounts.flatMap((a) => [handles.get(a), cards.get(a)]));
 }
 const handleOf = (a) => handles.get(a);
@@ -106,11 +107,18 @@ const cardOf = (a) => cards.get(a);
 function forget(account) {
   handles.delete(account);
   cards.delete(account);
+  monikerCards.delete(account);
+  photoAsked.delete(account);
+  if (photos.has(account)) URL.revokeObjectURL(photos.get(account));
+  photos.delete(account);
 }
 
 // Moniker cards, read together for the accounts asked for in one tick: a
-// feed's bylines and pictures share one read. A slow Moniker shows none.
+// feed's bylines and pictures share one read. A slow Moniker shows none just
+// now, and they're asked for again at the next draw that shows them.
 const monikerCards = new Map(); // account → Promise<Moniker card | undefined>
+const unread = new Set(); // accounts whose Moniker card wasn't read just now
+const UNREAD = Symbol("unread");
 let monikerAsked = [];
 function monikerCardOf(account) {
   if (!monikerCards.has(account)) {
@@ -118,7 +126,12 @@ function monikerCardOf(account) {
       queueMicrotask(() => {
         const batch = monikerAsked;
         monikerAsked = [];
-        const read = late(() => moniker.profiles(batch.map(([a]) => a)), []);
+        const accounts = batch.map(([a]) => a);
+        const read = late(() => moniker.profiles(accounts), UNREAD).then((found) => {
+          if (found !== UNREAD) return found;
+          accounts.forEach((a) => (monikerCards.delete(a), unread.add(a)));
+          return [];
+        });
         batch.forEach(([, done], i) => done(read.then((found) => found[i])));
       });
     }
@@ -129,26 +142,49 @@ function monikerCardOf(account) {
 
 // Photos from Moniker cards, as object URLs, once each has drawn; until then
 // an account shows its pattern, and the photo takes its place where it shows.
-const photos = new Map(); // account → object URL
+// The most recently drawn PHOTOS_KEPT are kept.
+const PHOTOS_KEPT = 256;
+const photos = new Map(); // account → object URL, oldest first
 const photoAsked = new Set();
+function keepPhoto(account, url) {
+  photos.delete(account);
+  photos.set(account, url);
+  for (const [old, oldURL] of photos) {
+    if (photos.size <= PHOTOS_KEPT) break;
+    photos.delete(old);
+    photoAsked.delete(old);
+    URL.revokeObjectURL(oldURL);
+  }
+}
 function photoOf(account) {
   if (photoAsked.has(account)) return;
   photoAsked.add(account);
   monikerCardOf(account)
-    .then((card) => card?.avatar && moniker.photo(card.avatar))
+    .then((card) => {
+      if (!card && unread.has(account)) photoAsked.delete(account);
+      return card?.avatar && moniker.photo(card.avatar);
+    })
     .then((file) => {
       if (!file) return;
       const url = URL.createObjectURL(new Blob([file.bytes], { type: file.type }));
       const img = new Image();
       // A photo that won't draw leaves the pattern.
       img.onload = () => {
-        photos.set(account, url);
-        document.querySelectorAll(`.avatar[data-of="${account}"]`).forEach((shown) => (shown.innerHTML = `<img src="${url}" alt="">`));
+        keepPhoto(account, url);
+        fillPhotos(document);
       };
       img.onerror = () => URL.revokeObjectURL(url);
       img.src = url;
     })
-    .catch(() => {});
+    // Not served just now: asked again after a while, not on every draw.
+    .catch(() => setTimeout(() => photoAsked.delete(account), 60_000));
+}
+/** Puts each photo that has drawn in place of its account's pattern, in `root`. */
+function fillPhotos(root) {
+  for (const shown of root.querySelectorAll(".avatar[data-of]")) {
+    const url = photos.get(shown.dataset.of);
+    if (url && shown.firstElementChild?.getAttribute("src") !== url) shown.innerHTML = `<img src="${url}" alt="">`;
+  }
 }
 
 /** An account's picture: the photo on its Moniker card, else the pattern drawn from its ID, the same in every Lattice app. */
@@ -332,6 +368,7 @@ async function render() {
     const typing = document.activeElement?.closest?.("main form[data-compose]") && document.activeElement;
     const at = typing && { key: typing.closest("form").dataset.compose, name: typing.name, alt: typing.dataset.alt, start: typing.selectionStart, end: typing.selectionEnd };
     main.innerHTML = html;
+    fillPhotos(main);
     fillStats(main);
     fillMedia(main);
     if (at) {
@@ -857,7 +894,7 @@ async function person(draw, who, tab = "posts") {
         <h1 tabindex="-1">${esc(name ?? (handle ? `@${handle}` : shortAccount(account)))}</h1>
         <p class="muted">${handle && name ? `@${esc(handle)} · ` : ""}<span class="mono" title="${account}">${esc(shortAccount(account))}</span></p>
         ${card.bio ? `<p class="bio">${renderText(card.bio)}</p>` : ""}
-        ${card.url || card.links ? `<p class="links small">${[...(card.url ? [{ label: new URL(card.url).host, url: card.url }] : []), ...(card.links ?? [])].map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener nofollow ugc">${esc(l.label)}</a>`).join("")}</p>` : ""}
+        ${card.url || card.links ? `<p class="links small">${[...(card.url ? [{ label: new URL(card.url).host, url: card.url }] : []), ...(card.links ?? [])].map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer nofollow ugc">${esc(l.label)}</a>`).join("")}</p>` : ""}
         ${counts ? `<p class="counts small"><span><strong>${counts.following.toLocaleString("en-US")}</strong> following</span><span><strong>${counts.followers.toLocaleString("en-US")}</strong> ${counts.followers === 1 ? "follower" : "followers"}</span></p>` : ""}
       </div>
       <div class="profile-actions">${actions}</div>
@@ -1159,7 +1196,7 @@ async function editCard() {
     <form class="card-form" data-card>
       <label>Name <input name="name" maxlength="50" value="${esc(card.name ?? "")}" autocomplete="name"></label>
       <label>Bio <textarea name="bio" rows="3" maxlength="300">${esc(card.bio ?? "")}</textarea></label>
-      <p class="muted small">Your @handle comes from Moniker and shows in every Lattice app.</p>
+      <p class="muted small">Your @handle comes from Moniker and shows in every Lattice app. A name or bio left empty here shows your Moniker card's, with its photo and links: change those on <a href="${MONIKER_APP}" target="_blank" rel="noopener">Moniker</a>.</p>
       <button type="submit">Save</button>
     </form>`;
   dialog.showModal();

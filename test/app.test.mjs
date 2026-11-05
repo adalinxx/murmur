@@ -47,10 +47,11 @@ test("times and characters left", () => {
 
 test("a person's card: Murmur's first, then Moniker's", () => {
   const moniker = { name: "Dana Okafor", description: "Moniker bio", avatar: ALICE, url: "https://dana.example/", links: [{ label: "Blog", url: "https://blog.example/" }] };
-  assert.deepEqual(shownCard({ name: "Dana", bio: "Murmur bio" }, moniker), { name: "Dana", bio: "Murmur bio", photo: ALICE, url: "https://dana.example/", links: moniker.links });
-  assert.deepEqual(shownCard({}, moniker), { name: "Dana Okafor", bio: "Moniker bio", photo: ALICE, url: "https://dana.example/", links: moniker.links });
-  // A Murmur name of only @s or spaces leaves Moniker's, and poses as no handle.
+  assert.deepEqual(shownCard({ name: "Dana", bio: "Murmur bio" }, moniker), { name: "Dana", bio: "Murmur bio", url: "https://dana.example/", links: moniker.links });
+  assert.deepEqual(shownCard({}, moniker), { name: "Dana Okafor", bio: "Moniker bio", url: "https://dana.example/", links: moniker.links });
+  // A Murmur name of only @s, spaces or invisible controls leaves Moniker's, and poses as no handle.
   assert.equal(shownCard({ name: " @＠ ", bio: "  " }, moniker).name, "Dana Okafor");
+  assert.equal(shownCard({ name: "\u200b\u202e" }, moniker).name, "Dana Okafor");
   assert.equal(shownCard({ name: "@dana" }).name, "dana");
   assert.deepEqual(shownCard({}, undefined), {});
   assert.deepEqual(shownCard(undefined, undefined), {});
