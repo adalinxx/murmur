@@ -1,8 +1,13 @@
 // The client createMoniker returns, over a link to Moniker:
-// `{ chain, nodes, hosts(), state({ fresh }) }`, as `connect` makes it. Reads
-// take the chain's state at a host's tip; writes go to the person's wallet,
-// which shows them, sets the fee, signs and sends; nothing here holds a key.
+// `{ chain, nodes, hosts(), state({ fresh }), volume(cid) }`, as `connect`
+// makes it. Reads take the chain's state at a host's tip; writes go to the
+// person's wallet, which shows them, sets the fee, signs and sends; nothing
+// here holds a key. Photos are kept by a storage sponsor, paid with this
+// device's work, and read back from the hosts by CID.
+import { photoVolume, preparePhoto, readPhoto } from "./photo.mjs";
 import * as names from "./records/names.mjs";
+import * as profiles from "./records/profile.mjs";
+import { StorageRefused, storageChain, store } from "./storage.mjs";
 import { anyHost, tip, view, volumeLoader } from "./records/state.mjs";
 import { writeRequest, writeRequestURI } from "./records/wallet.mjs";
 
@@ -82,7 +87,10 @@ export function connect({ sdk, chain, nodes, seeds, freshFor }) {
     return read;
   }
 
-  return { chain, nodes, hosts: async () => (await hosts()).hosts, state };
+  /** The Volume whose root is `cid`, from the first host that serves it, checked by CID. */
+  const volume = async (cid) => (await hosts()).volumes.get(cid);
+
+  return { chain, nodes, hosts: async () => (await hosts()).hosts, state, volume };
 }
 
 const needWallet = (wallet) => {
@@ -99,12 +107,75 @@ async function buildAndSend(link, wallet, build) {
   return send(link, wallet, await build(await link.state({ fresh: true }), account));
 }
 const bare = (handle) => String(handle).replace(/^@/, "");
+/** How many photos a client keeps read at once. */
+const PHOTOS_KEPT = 256;
 
-/** The names client over a link to Moniker; `app` is the Moniker app's URL. */
-export function monikerClient(link, { app }) {
+/**
+ * The names client over a link to Moniker; `app` is the Moniker app's URL,
+ * `sdk` the Lattice SDK module, `sponsor` the storage sponsor that keeps
+ * photos, and `hash(work, found, hashed)` grinds its work on this device
+ * (vendor/work/hash.mjs in a browser).
+ */
+export function monikerClient(link, { app, sdk, sponsor, hash }) {
   const { state } = link;
   const fresh = () => state({ fresh: true });
   const act = (wallet, build) => buildAndSend(link, wallet, build);
+
+  /** The photo kept as `cid`, `{ type, bytes }`, checked; undefined if it isn't one. Throws when no host serves it. */
+  async function photo(cid) {
+    if (!profiles.isPhotoCID(cid)) return undefined;
+    const volume = await link.volume(cid);
+    return readPhoto(sdk, volume.bytes(cid));
+  }
+  // Each photo read once: it is content-addressed, so it never changes. The
+  // most recently used PHOTOS_KEPT are kept; older ones are let go.
+  const photos = new Map(); // cid → Promise<object URL | undefined>, oldest first
+  const remember = (cid, url) => {
+    photos.delete(cid);
+    photos.set(cid, url);
+    for (const [old, kept] of photos) {
+      if (photos.size <= PHOTOS_KEPT) break;
+      photos.delete(old);
+      kept.then((u) => u && URL.revokeObjectURL(u));
+    }
+  };
+  function photoURL(cid) {
+    if (!profiles.isPhotoCID(cid)) return Promise.resolve(undefined);
+    if (photos.has(cid)) remember(cid, photos.get(cid));
+    else {
+      const read = photo(cid).then(
+        (file) => file && URL.createObjectURL(new Blob([file.bytes], { type: file.type })),
+        () => {
+          // Not served just now: asked again after a while, not on every draw.
+          setTimeout(() => photos.get(cid) === read && photos.delete(cid), 60_000);
+          return undefined;
+        },
+      );
+      remember(cid, read);
+    }
+    return photos.get(cid);
+  }
+  /**
+   * Has the storage sponsor keep a photo for good, paid with shares of this
+   * device's work: a picture file (cropped and re-encoded first, see
+   * `preparePhoto`), or `{ type, bytes }` already a photo.
+   */
+  async function keepPhoto(file, { sponsor: url = sponsor, hash: grind = hash, progress = () => {}, signal } = {}) {
+    if (!grind) throw new Error("Keeping a photo needs { hash }: what grinds the sponsor's work here");
+    if (!url) throw new StorageRefused("No storage sponsor is set to keep photos.");
+    progress({ stage: "prepare" });
+    const { type, bytes } = typeof Blob !== "undefined" && file instanceof Blob ? await preparePhoto(file) : file;
+    const volume = photoVolume(sdk, type, bytes);
+    // Work on Moniker's chain where the sponsor prices storage there, else on
+    // any chain it does: a kept file is a CID on its node, whichever chain's work paid.
+    const paidOn = await storageChain(url, [link.chain.join("/")]);
+    if (!paidOn) throw new StorageRefused("The storage sponsor isn't keeping photos right now.");
+    await store(url, volume, { chain: paidOn, hash: grind, progress, signal });
+    // Kept: shown from here at once, without reading it back.
+    const shown = URL.createObjectURL(new Blob([bytes], { type }));
+    remember(volume.cid, Promise.resolve(shown));
+    return { cid: volume.cid, type, bytes, url: shown };
+  }
   return {
     chain: link.chain,
     nodes: link.nodes,
@@ -134,6 +205,13 @@ export function monikerClient(link, { app }) {
     label: async (address, card) => names.label(address, { name: card?.name, handle: await names.handleOf(await state(), address) }),
     /** Names for sale, cheapest first. */
     forSale: async () => names.forSale(await state()),
+    /** An account's default card, `{ name?, description?, avatar?, url?, links? }`, or undefined when it has none. */
+    profile: async (address) => profiles.profileOf(await state(), address),
+    /** `profile` for many accounts, in order, from one state: for a feed. */
+    profiles: async (addresses) => profiles.profilesOf(await state(), addresses),
+    photo,
+    /** The photo kept as `cid` as an object URL for an <img>, read once; undefined when it isn't one or isn't served. */
+    photoURL,
     /** A field an account keeps, such as `key.x25519` or `app.<name>.<field>`. */
     field: async (address, name) => names.getField(await state(), address, name),
     /** A link to a name's Moniker page. */
@@ -162,6 +240,27 @@ export function monikerClient(link, { app }) {
     stopShowing: ({ wallet }) => act(wallet, (s, a) => names.stopShowing(s, a)),
     /** Sets a field for the connected account, or removes it with undefined. */
     setField: (name, value, { wallet }) => act(wallet, (s, a) => names.setField(s, a, name, value)),
+    /** Changes your card: each field named is set, or removed when empty; the rest are kept. */
+    setProfile: (card, { wallet }) => act(wallet, (s, a) => profiles.setProfile(s, a, card)),
+    /** Deletes your card. */
+    clearProfile: ({ wallet }) => act(wallet, (s, a) => profiles.clearProfile(s, a)),
+    /** Takes the photo off your card. The sponsor still keeps the file. */
+    clearPhoto: ({ wallet }) => act(wallet, (s, a) => profiles.setProfile(s, a, { avatar: undefined })),
+    /** Keeps a photo for good with this device's work, without writing it: `{ cid, type, bytes, url }`. */
+    keepPhoto,
+    /**
+     * Keeps a photo for good with this device's work, then puts it on your
+     * card. `progress({ stage, done })`: "prepare", then the sponsor's
+     * stages ("upload", "work", "busy", "grind" with `done`, "pin"), then
+     * "card". Throws StorageRefused, saying why, or StorageStopped once
+     * `signal` aborts.
+     */
+    setPhoto: async (file, { wallet, progress = () => {}, ...options } = {}) => {
+      needWallet(wallet);
+      const { cid } = await keepPhoto(file, { progress, ...options });
+      progress({ stage: "card" });
+      return act(wallet, (s, a) => profiles.setProfile(s, a, { avatar: cid }));
+    },
     /**
      * A lattice://write request that claims `@handle`, or buys it at the
      * price the chain holds now, for whichever account signs it, and points

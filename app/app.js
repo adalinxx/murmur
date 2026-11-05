@@ -28,7 +28,7 @@ import { defineHandlePicker } from "./vendor/moniker-sdk/src/picker.mjs";
 import { accountIcon, shortAccount } from "./vendor/moniker-sdk/src/records/account.mjs";
 import { selfhold } from "./vendor/selfhold.mjs";
 import { hasher, workDevice } from "./vendor/work/hash.mjs";
-import { ago, count, esc, left, parseRoute, PROFILE_TABS, searchPath, parseWho, personPath, postPath, renderText, when } from "./lib.mjs";
+import { ago, count, esc, left, parseRoute, PROFILE_TABS, searchPath, parseWho, personPath, postPath, renderText, shownCard, when } from "./lib.mjs";
 
 const params = new URLSearchParams(location.search);
 const list = (name) => params.get(name)?.split(",").filter(Boolean);
@@ -90,7 +90,7 @@ let me = null; // the connected account
 // ---------------------------------------------------------------- people
 
 const handles = new Map(); // account → Promise<handle | undefined>
-const cards = new Map(); // account → Promise<{ name?, bio? }>
+const cards = new Map(); // account → Promise<shownCard: Murmur's card, then Moniker's>
 /** Reads the handles and cards of `accounts` not read yet, all at once. */
 async function know(accounts) {
   const fresh = [...new Set(accounts)].filter((a) => !handles.has(a));
@@ -98,7 +98,7 @@ async function know(accounts) {
     const all = names.handlesOf(fresh);
     fresh.forEach((a, i) => handles.set(a, all.then((h) => h[i])));
   }
-  for (const a of accounts) if (!cards.has(a)) cards.set(a, murmur.card(a).catch(() => ({})));
+  for (const a of accounts) if (!cards.has(a)) cards.set(a, Promise.all([murmur.card(a).catch(() => ({})), monikerCardOf(a)]).then(([own, card]) => shownCard(own, card)));
   await Promise.all(accounts.flatMap((a) => [handles.get(a), cards.get(a)]));
 }
 const handleOf = (a) => handles.get(a);
@@ -108,13 +108,60 @@ function forget(account) {
   cards.delete(account);
 }
 
-/** An account's picture: the pattern drawn from its ID, the same in every Lattice app. */
-const avatar = (account, size = 40) => `<span class="avatar" style="--size:${size}px" aria-hidden="true">${accountIcon(account, size)}</span>`;
+// Moniker cards, read together for the accounts asked for in one tick: a
+// feed's bylines and pictures share one read. A slow Moniker shows none.
+const monikerCards = new Map(); // account → Promise<Moniker card | undefined>
+let monikerAsked = [];
+function monikerCardOf(account) {
+  if (!monikerCards.has(account)) {
+    if (!monikerAsked.length) {
+      queueMicrotask(() => {
+        const batch = monikerAsked;
+        monikerAsked = [];
+        const read = late(() => moniker.profiles(batch.map(([a]) => a)), []);
+        batch.forEach(([, done], i) => done(read.then((found) => found[i])));
+      });
+    }
+    monikerCards.set(account, new Promise((done) => monikerAsked.push([account, done])));
+  }
+  return monikerCards.get(account);
+}
+
+// Photos from Moniker cards, as object URLs, once each has drawn; until then
+// an account shows its pattern, and the photo takes its place where it shows.
+const photos = new Map(); // account → object URL
+const photoAsked = new Set();
+function photoOf(account) {
+  if (photoAsked.has(account)) return;
+  photoAsked.add(account);
+  monikerCardOf(account)
+    .then((card) => card?.avatar && moniker.photo(card.avatar))
+    .then((file) => {
+      if (!file) return;
+      const url = URL.createObjectURL(new Blob([file.bytes], { type: file.type }));
+      const img = new Image();
+      // A photo that won't draw leaves the pattern.
+      img.onload = () => {
+        photos.set(account, url);
+        document.querySelectorAll(`.avatar[data-of="${account}"]`).forEach((shown) => (shown.innerHTML = `<img src="${url}" alt="">`));
+      };
+      img.onerror = () => URL.revokeObjectURL(url);
+      img.src = url;
+    })
+    .catch(() => {});
+}
+
+/** An account's picture: the photo on its Moniker card, else the pattern drawn from its ID, the same in every Lattice app. */
+const avatar = (account, size = 40) => {
+  photoOf(account);
+  const url = photos.get(account);
+  return `<span class="avatar" data-of="${account}" style="--size:${size}px" aria-hidden="true">${url ? `<img src="${url}" alt="">` : accountIcon(account, size)}</span>`;
+};
 
 /** A name line: the card's name (no @ of its own), the verified @handle, else the account's short form. */
 async function byline(account) {
   const [handle, card] = await Promise.all([handleOf(account), cardOf(account)]);
-  const name = card?.name?.replace(/[@＠﹫]/g, "");
+  const name = card?.name;
   const href = personPath(account, handle);
   const primary = name ?? (handle ? `@${handle}` : shortAccount(account));
   const secondary = name && handle ? `@${handle}` : name ? shortAccount(account) : "";
@@ -124,7 +171,7 @@ async function byline(account) {
 /** How a post names someone in a line: their @handle, else their card's name, else a short account ID. */
 async function shortName(account) {
   const [handle, card] = await Promise.all([handleOf(account), cardOf(account)]);
-  return handle ? `@${handle}` : card?.name?.replace(/[@＠﹫]/g, "") || shortAccount(account);
+  return handle ? `@${handle}` : card?.name || shortAccount(account);
 }
 
 // ---------------------------------------------------------------- posts
@@ -719,7 +766,7 @@ async function forYouPage(draw, top) {
 /** A person's name as a link, for a line of text. */
 async function nameLink(account) {
   const [handle, card] = await Promise.all([handleOf(account), cardOf(account)]);
-  const name = card?.name?.replace(/[@＠﹫]/g, "") ?? (handle ? `@${handle}` : shortAccount(account));
+  const name = card?.name ?? (handle ? `@${handle}` : shortAccount(account));
   return `<a class="name" href="${personPath(account, handle)}">${esc(name)}</a>`;
 }
 
@@ -786,7 +833,7 @@ async function person(draw, who, tab = "posts") {
     me && me !== account ? within(followGraph.follows(me, account).catch(() => false), 8_000, false) : false,
   ]);
   const self = account === me;
-  const name = card.name?.replace(/[@＠﹫]/g, "");
+  const name = card.name;
   const actions = self
     ? `<button class="secondary" data-act="edit-card">Edit profile</button>${handle ? "" : `<button class="secondary" data-act="pick-handle">Choose a @handle</button>`}`
     : `${mutedSet().has(account) ? `<button class="secondary" data-act="unmute" data-who="${account}">Unmute</button>` : ""}<button data-act="${following ? "unfollow" : "follow"}" data-who="${account}" aria-pressed="${following}">${following ? "Following" : "Follow"}</button>`;
@@ -810,6 +857,7 @@ async function person(draw, who, tab = "posts") {
         <h1 tabindex="-1">${esc(name ?? (handle ? `@${handle}` : shortAccount(account)))}</h1>
         <p class="muted">${handle && name ? `@${esc(handle)} · ` : ""}<span class="mono" title="${account}">${esc(shortAccount(account))}</span></p>
         ${card.bio ? `<p class="bio">${renderText(card.bio)}</p>` : ""}
+        ${card.url || card.links ? `<p class="links small">${[...(card.url ? [{ label: new URL(card.url).host, url: card.url }] : []), ...(card.links ?? [])].map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener nofollow ugc">${esc(l.label)}</a>`).join("")}</p>` : ""}
         ${counts ? `<p class="counts small"><span><strong>${counts.following.toLocaleString("en-US")}</strong> following</span><span><strong>${counts.followers.toLocaleString("en-US")}</strong> ${counts.followers === 1 ? "follower" : "followers"}</span></p>` : ""}
       </div>
       <div class="profile-actions">${actions}</div>

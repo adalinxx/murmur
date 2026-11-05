@@ -96,3 +96,21 @@ export const count = (n) => (n > 0 ? n.toLocaleString("en-US") : "");
 
 /** Characters left in a draft of `max`, counted as a person sees them. */
 export const left = (text, max = 280) => max - [...String(text)].length;
+
+/**
+ * What shows for a person: their Murmur card's name and bio (no @ of its
+ * own), and where it leaves one out, their Moniker card's; with the Moniker
+ * card's photo, website and links. Moniker reads its cards (readCard), so
+ * what comes from it is already checked.
+ */
+export function shownCard(own = {}, moniker = {}) {
+  const name = own.name?.replace(/[@＠﹫]/g, "").trim() || moniker.name;
+  const bio = own.bio?.trim() || moniker.description;
+  return {
+    ...(name && { name }),
+    ...(bio && { bio }),
+    ...(moniker.avatar && { photo: moniker.avatar }),
+    ...(moniker.url && { url: moniker.url }),
+    ...(moniker.links && { links: moniker.links }),
+  };
+}
