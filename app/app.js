@@ -60,6 +60,21 @@ const names = {
   handlesOf: (as) => late(() => moniker.handlesOf(as), as.map(() => undefined)),
 };
 const graph = createFollows({ sdk, moniker: names, nodes: NODES, ...(path("follows") && { chain: path("follows") }) });
+// Follows' reads that take and give accounts only: no handle is looked up
+// on Moniker, so a slow Moniker never makes whom you follow look empty.
+const noNames = { pointers: async (hs) => hs.map(() => undefined), handlesOf: async (as) => as.map(() => undefined) };
+const followGraph = {
+  /** The accounts `account` follows. */
+  following: async (account) => (await followRecords.following(await graph.state(), noNames, account)).map((p) => p.account),
+  /** How many follow `account`, and how many it follows. */
+  counts: async (account) => {
+    const state = await graph.state();
+    const [followers, following] = await Promise.all([followRecords.followers(state, noNames, account), followRecords.following(state, noNames, account)]);
+    return { followers: followers.length, following: following.length };
+  },
+  /** Whether `account` follows `who`, both accounts. */
+  follows: async (account, who) => followRecords.follows(await graph.state(), noNames, account, who),
+};
 
 // Selfhold's window, for Murmur's and Follows' chains (on the same hosts) and
 // for Moniker's. It holds the key, shows each write, and has its fee paid in work.
@@ -459,13 +474,17 @@ async function home(draw, view) {
   if (view === "everyone") {
     posts = await murmur.everyone({ limit: limit + 1 });
   } else {
-    following = await within(graph.followingAccounts(me).catch(() => []), 8_000, []);
-    posts = await murmur.feed([me, ...following], { limit: limit + 1 });
+    // Not read is not nobody: it says so, and shows your own posts meanwhile.
+    following = await within(followGraph.following(me).catch(() => null), 8_000, null);
+    posts = await murmur.feed([me, ...(following ?? [])], { limit: limit + 1 });
   }
   const more = moreButton(limit, posts.length);
   posts = posts.slice(0, limit);
-  watching(posts, view === "everyone" ? null : new Set([me, ...following]));
+  watching(posts, view === "everyone" ? null : new Set([me, ...(following ?? [])]));
   const html = await renderPosts(posts.filter((p) => !muted.has(p.author)));
+  if (view === "following" && following === null) {
+    return draw(`${top()}<div class="status"><p class="muted">Whom you follow couldn't be read just now.</p><button class="secondary" data-act="retry">Try again</button></div><ul class="posts">${html}</ul>`);
+  }
   if (view === "following" && following.length === 0) {
     return draw(`${top()}<p class="status muted">You follow nobody yet. Find people on <a href="#/">For you</a> or <a href="#/everyone">Everyone</a>, then follow them from their page.</p><ul class="posts">${html}</ul>`);
   }
@@ -723,9 +742,9 @@ async function person(draw, who, tab = "posts") {
   const [handle, card, counts, posts, following] = await Promise.all([
     handleOf(account),
     cardOf(account),
-    within(graph.counts(account).catch(() => undefined), 8_000, undefined),
+    within(followGraph.counts(account).catch(() => undefined), 8_000, undefined),
     tab === "likes" ? murmur.likedBy(account, { limit: 100 }) : murmur.postsBy(account, { limit: tab === "posts" ? 300 : 500 }),
-    me && me !== account ? within(graph.follows(me, account).catch(() => false), 8_000, false) : false,
+    me && me !== account ? within(followGraph.follows(me, account).catch(() => false), 8_000, false) : false,
   ]);
   const self = account === me;
   const name = card.name?.replace(/[@＠﹫]/g, "");
@@ -932,7 +951,7 @@ async function act(button) {
         button.dataset.act = follow ? "unfollow" : "follow";
         button.textContent = follow ? "Following" : "Follow";
         button.setAttribute("aria-pressed", String(follow));
-        whenLanded(async () => (await graph.follows(me, who)) === follow);
+        whenLanded(async () => (await followGraph.follows(me, who)) === follow);
       }
       return;
     }
