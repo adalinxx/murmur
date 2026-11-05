@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as sdk from "../vendor/lattice-sdk.js";
-import { ago, left, parseRoute, parseWho, renderText } from "../app/lib.mjs";
+import { ago, left, parseRoute, parseWho, renderText, shownCard } from "../app/lib.mjs";
 
 const ALICE = sdk.addressFromPublicKey(sdk.publicKeyFromPrivate(new Uint8Array(32).fill(1)));
 
@@ -43,4 +43,16 @@ test("times and characters left", () => {
   assert.equal(ago(Date.UTC(2026, 9, 2, 12), now), "Oct 2");
   assert.equal(ago(Date.UTC(2025, 9, 2, 12), now), "Oct 2, 2025");
   assert.equal(left("😀".repeat(10)), 270);
+});
+
+test("a person's card: Murmur's first, then Moniker's", () => {
+  const moniker = { name: "Dana Okafor", description: "Moniker bio", avatar: ALICE, url: "https://dana.example/", links: [{ label: "Blog", url: "https://blog.example/" }] };
+  assert.deepEqual(shownCard({ name: "Dana", bio: "Murmur bio" }, moniker), { name: "Dana", bio: "Murmur bio", url: "https://dana.example/", links: moniker.links });
+  assert.deepEqual(shownCard({}, moniker), { name: "Dana Okafor", bio: "Moniker bio", url: "https://dana.example/", links: moniker.links });
+  // A Murmur name of only @s, spaces or invisible controls leaves Moniker's, and poses as no handle.
+  assert.equal(shownCard({ name: " @＠ ", bio: "  " }, moniker).name, "Dana Okafor");
+  assert.equal(shownCard({ name: "\u200b\u202e" }, moniker).name, "Dana Okafor");
+  assert.equal(shownCard({ name: "@dana" }).name, "dana");
+  assert.deepEqual(shownCard({}, undefined), {});
+  assert.deepEqual(shownCard(undefined, undefined), {});
 });

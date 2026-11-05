@@ -11,8 +11,12 @@ the names chain every app shares.
   it. All of it lives on Moniker, so one state decides; your app needs nothing on its own chain
   for handles.
 
-Your app keeps its own records, cards included, on its own chain, keyed by
-account. Reads come from the hosts Nexus lists for Moniker and are checked by
+- An account may keep a **default profile card** on Moniker
+  (`user/<account>/profile`): a display name, a bio, a photo, a website and
+  links, for any app to show. Your app may keep its own cards on its own
+  chain, keyed by account, and show Moniker's where it has none.
+
+Reads come from the hosts Nexus lists for Moniker and are checked by
 CID; writes go to the person's Lattice Wallet, which shows and signs them. No
 key handling here.
 
@@ -94,7 +98,8 @@ await window.lattice.openRequest(uri);            // from a click; or show `uri`
 The builders under the client are exported too, over any state view (the
 client's `state()`): `claim`, `pointName`, `buy`, `release`, `acquire`,
 `showName`, `stopShowing`, `resolve`, `ownersOf`, `pointer`, `handleOf`, `handlesOf`,
-`label`, `displayName`. Each write returns `{ actions, payments }`;
+`label`, `displayName`, and for cards `profileOf`, `profilesOf`, `readCard`,
+`setProfile`, `clearProfile`. Each write returns `{ actions, payments }`;
 `combine(...writes)` joins them into one transaction the way the policy reads
 it: each key changes once, where it first comes, an unchanged rewrite giving
 way to a real change of the same key (its index keys and pointer moving up
@@ -106,16 +111,79 @@ handle over 446 characters), a value over 16 KiB, or two claims in one
 write. A name that comes to a new owner is always pointed by it in the same
 transaction, so no earlier owner's pointer survives.
 
+## Profile cards
+
+```js
+await moniker.profile(address);                   // { name?, description?, avatar?, url?, links? }, or undefined
+await moniker.profiles(addresses);                // a feed's cards, in order, from one read
+await moniker.setProfile({ name: "Dana Okafor", description: "Birds.", url: "https://dana.example",
+  links: [{ label: "Blog", url: "https://blog.example" }] }, { wallet });
+await moniker.setProfile({ description: "" }, { wallet });   // a field named empty is removed; the rest are kept
+await moniker.clearProfile({ wallet });
+```
+
+The card is one JSON value at `user/<account>/profile`, the key and fields
+Fanfare reads. Only the account writes it, but it writes what it likes, so
+every card is read as untrusted, and what doesn't parse is left out:
+
+- `name`: the display name, with every `@` and invisible control dropped, as
+  `displayName` drops them, so it never poses as a handle; at most 64
+  characters.
+- `description`: the bio, at most 280 characters.
+- `avatar`: the photo's CID (see below).
+- `url`, and `links` (`[{ label, url }]`, at most 8): http and https only.
+
+A card holds no handle: the verified handle is `user/<account>/name` and its
+pointer, as above, and a `handle` in an old card is ignored (and dropped when
+the card is next written). `setProfile` refuses here, with the reason, a card
+the reader would drop or the policy refuse (over 16 KiB), and names the card
+it read, so a card changed since is refused by consensus rather than
+overwritten.
+
+## Photos
+
+```js
+await moniker.setPhoto(file, { wallet, progress });  // kept for good with this device's work, then on the card
+await moniker.keepPhoto(file, { progress });         // kept, not written: { cid, type, bytes, url }
+await moniker.clearPhoto({ wallet });
+await moniker.photoURL(profile.avatar);              // an object URL for an <img>, or undefined
+```
+
+A photo needs no coins. `setPhoto` crops the chosen picture to its middle
+square, at most 512 pixels across, re-encodes it as WebP (JPEG where the
+browser writes no WebP), which drops its metadata, and has a **storage
+sponsor** ([lattice-sponsor](https://github.com/0xLattice/lattice-sponsor)
+with `--sell-storage`; `DEFAULTS.sponsor`, or pass `sponsor`) keep it for
+good, paid with shares of this device's work, ground on its graphics chip
+where the page can use one, else its processor (`vendor/work/`). Then it
+writes the card, its fee paid as the wallet pays it (Selfhold's window, in
+this device's work too). `progress({ stage, done })` hears `prepare`, then
+the sponsor's `upload`, `work`, `busy`, `grind` (with `done`, 0 to 1) and
+`pin`, then `card`; it throws `StorageRefused`, saying why, or
+`StorageStopped` once `signal` aborts. In Node, pass `hash` to
+`createMoniker` and a photo as `{ type, bytes }`.
+
+The photo is one Volume of one DAG-CBOR block `{ type, size, bytes }`
+(lattice-storage's file layout), named by its CID. A reader fetches it from
+Moniker's hosts by CID, checks it against the CID, and shows it only if it
+is WebP, PNG or JPEG (never SVG), its bytes begin as that type does, and it
+is at most 256 KB.
+
 ## The byline element
 
 ```js
 defineMonikerName(moniker);   // <moniker-name address="bafyrei…" name="Alice Ng" size="24"></moniker-name>
 ```
 
-`<moniker-name>` shows the `name` your app knows the account by and its
-verified `@handle`, the handle linked to its Moniker page (`plain` drops the
-link), beside the account's own pattern; restyle it with `--moniker-ink`,
+`<moniker-name>` shows the `name` your app knows the account by, else the
+name on its Moniker card, and its verified `@handle`, the handle linked to
+its Moniker page (`plain` drops the link), beside the photo on its card, else
+the account's own pattern; restyle it with `--moniker-ink`,
 `--moniker-muted` and `--moniker-accent`. See [`demo.html`](demo.html).
+
+```js
+defineMonikerPhoto(moniker);   // <moniker-photo address="bafyrei…" size="40"></moniker-photo>: the picture alone
+```
 
 ## Showing an account
 
@@ -175,13 +243,18 @@ or a state of its own making, as Moniker's.
 - `src/index.mjs`: `createMoniker`, the builders and the checks.
 - `src/browser.mjs`: the same, bound to the vendored Lattice SDK.
 - `src/client.mjs`: the client, over a link to Moniker.
-- `src/element.mjs`: `<moniker-name>`.
+- `src/element.mjs`: `<moniker-name>` and `<moniker-photo>`.
+- `src/photo.mjs`: photos as Volumes, read and checked, and prepared in a
+  canvas.
+- `src/storage.mjs`: the storage sponsor client (from Murmur).
 - `src/picker.mjs`: `<moniker-handle-picker>`.
 - `src/records/`: `names.mjs` (Moniker's records, as pure builders over a
-  state view), `shared.mjs` (tokens, `combine`, checks), `state.mjs` (reads
+  state view), `profile.mjs` (the card), `shared.mjs` (tokens, `combine`, checks), `state.mjs` (reads
   state by descending the trie, checked by CID), `wallet.mjs` (the request
   the Lattice Wallet signs).
 - `vendor/lattice-sdk.js`: the Lattice SDK, bundled for browsers.
+- `vendor/work/`: grinds a sponsor's work on this device's GPU, else its
+  processor (from Murmur, adapted from Selfhold; MIT).
 
 ## Test
 
