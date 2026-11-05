@@ -499,16 +499,16 @@ async function home(draw, view) {
   if (view === "everyone") {
     posts = await murmur.everyone({ limit: limit + 1 });
   } else {
-    // Not read is not nobody: it says so, and shows your own posts meanwhile.
+    // Whom you follow, not you: your posts are on your profile. Not read is not nobody: it says so.
     following = await within(followGraph.following(me).catch(() => null), 8_000, null);
-    posts = await murmur.feed([me, ...(following ?? [])], { limit: limit + 1 });
+    posts = following?.length ? await murmur.feed(following.filter((a) => a !== me), { limit: limit + 1 }) : [];
   }
   const more = moreButton(limit, posts.length);
   posts = posts.slice(0, limit);
-  watching(posts, view === "everyone" ? null : new Set([me, ...(following ?? [])]));
+  watching(posts, view === "everyone" ? null : new Set(following ?? []));
   const html = await renderPosts(posts.filter((p) => !muted.has(p.author)));
   if (view === "following" && following === null) {
-    return draw(`${top()}<div class="status"><p class="muted">Whom you follow couldn't be read just now.</p><button class="secondary" data-act="retry">Try again</button></div><ul class="posts">${html}</ul>`);
+    return draw(`${top()}<div class="status"><p class="muted">Whom you follow couldn't be read just now.</p><button class="secondary" data-act="retry">Try again</button></div>`);
   }
   if (view === "following" && following.length === 0) {
     return draw(`${top()}<p class="status muted">You follow nobody yet. Find people on <a href="#/">For you</a> or <a href="#/everyone">Everyone</a>, then follow them from their page.</p><ul class="posts">${html}</ul>`);
