@@ -211,7 +211,8 @@ state view `{ get(key), list(prefix) }`.
   `wallet.mjs` builds the wallet request, with no fee.
 - `app/`: the page. `app/vendor/` holds Selfhold's client (`selfhold.mjs`,
   from Stoa) and moniker-sdk.
-- `vendor/`: the Lattice SDK bundled for browsers, and Follows
+- `vendor/`: the Lattice SDK bundled for browsers (lattice-sdk 382bf8c, by
+  `esbuild@0.24.2 packages/sdk/src/index.ts --bundle --format=esm --minify`), and Follows
   (`vendor/follows/`, at the commit in `COMMIT`).
 
 ## Test

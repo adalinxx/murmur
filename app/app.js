@@ -61,20 +61,23 @@ const names = {
   handlesOf: (as) => late(() => moniker.handlesOf(as), as.map(() => undefined)),
 };
 const graph = createFollows({ sdk, moniker: names, nodes: NODES, ...(path("follows") && { chain: path("follows") }) });
+// Follows' chain, read as Murmur's is: from the nodes that serve it, found
+// from NODES. (Follows' own reads go to NODES alone.)
+const followsState = createMurmur({ sdk, nodes: NODES, chain: graph.chain }).state;
 // Follows' reads that take and give accounts only: no handle is looked up
 // on Moniker, so a slow Moniker never makes whom you follow look empty.
 const noNames = { pointers: async (hs) => hs.map(() => undefined), handlesOf: async (as) => as.map(() => undefined) };
 const followGraph = {
   /** The accounts `account` follows. */
-  following: async (account) => (await followRecords.following(await graph.state(), noNames, account)).map((p) => p.account),
+  following: async (account) => (await followRecords.following(await followsState(), noNames, account)).map((p) => p.account),
   /** How many follow `account`, and how many it follows. */
   counts: async (account) => {
-    const state = await graph.state();
+    const state = await followsState();
     const [followers, following] = await Promise.all([followRecords.followers(state, noNames, account), followRecords.following(state, noNames, account)]);
     return { followers: followers.length, following: following.length };
   },
   /** Whether `account` follows `who`, both accounts. */
-  follows: async (account, who) => followRecords.follows(await graph.state(), noNames, account, who),
+  follows: async (account, who) => followRecords.follows(await followsState(), noNames, account, who),
 };
 
 // Selfhold's window, for Murmur's and Follows' chains (on the same hosts) and
@@ -646,7 +649,7 @@ const notifyStore = {
 /** What happened to you, with each like and follow stamped the first time this device sees it. */
 async function readNotifications() {
   const account = me;
-  const [snapshot, followers, handle] = await Promise.all([murmur.snapshot(), within(graph.followers(account).catch(() => []), 8_000, []), know([account]).then(() => handleOf(account))]);
+  const [snapshot, followers, handle] = await Promise.all([murmur.snapshot(), within(followsState().then((state) => followRecords.followers(state, names, account)).catch(() => []), 8_000, []), know([account]).then(() => handleOf(account))]);
   const saved = notifyStore.load();
   const firstSeen = new Map(Object.entries(saved.firstSeen).filter(([, t]) => t > 0));
   const muted = mutedSet();
@@ -753,7 +756,7 @@ const within = (promise, ms, fallback) => {
 
 /** Every follow on Follows: account to account, as Follows keeps them. */
 async function followEdges() {
-  const state = await graph.state();
+  const state = await followsState();
   const edges = [];
   for await (const [key] of state.list("follows/")) {
     const [a, t, ...rest] = key.slice("follows/".length).split("/");
@@ -1084,7 +1087,7 @@ async function act(button) {
       const follow = button.dataset.act === "follow";
       const ok = await writing(follow ? "Following." : "Unfollowed.", async ({ wallet, account, progress }) => {
         await names.state({ fresh: true });
-        const state = await graph.state({ fresh: true });
+        const state = await followsState({ fresh: true });
         const write = follow ? await followRecords.follow(state, names, account, who) : await followRecords.unfollow(state, names, account, who);
         if (write.actions.length === 0) return null;
         return wallet.writeRecords({ chainPath: graph.chain, actions: write.actions }, { account, progress });
