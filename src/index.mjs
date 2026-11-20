@@ -17,7 +17,7 @@ import { writeRequest } from "./records/wallet.mjs";
 /** Where Murmur lives now: its testnet trial chain on the shared app hosts. */
 export const DEFAULTS = {
   chain: ["Nexus", "testnet", "murmur-51cf47"],
-  nodes: ["https://lattice-testnet-apps-iad.fly.dev", "https://lattice-testnet-apps-ams.fly.dev"],
+  nodes: ["https://lattice-testnet-apps-iad.fly.dev", "https://ams.testnet.lattice.build"],
   // How long a read state is reused before asking for the tip again.
   freshFor: 10_000,
   // The sponsor that keeps pictures for work, as Stoa uses it.

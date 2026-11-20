@@ -33,7 +33,7 @@ import { ago, count, esc, left, parseRoute, PROFILE_TABS, searchPath, parseWho, 
 const params = new URLSearchParams(location.search);
 const list = (name) => params.get(name)?.split(",").filter(Boolean);
 const path = (name) => params.get(name)?.split("/").filter(Boolean);
-const NODES = list("node") ?? ["https://lattice-testnet-apps-iad.fly.dev", "https://lattice-testnet-apps-ams.fly.dev"];
+const NODES = list("node") ?? ["https://lattice-testnet-apps-iad.fly.dev", "https://ams.testnet.lattice.build"];
 // The sponsor that takes this device's work for fees and for keeping pictures, as Stoa uses it.
 const SPONSOR = params.get("sponsor") ?? "https://lattice-testnet-apps-iad.fly.dev:8650/sponsor";
 const WALLET_PAGE = params.get("wallet") ?? "https://wallet.selfhold.app/";
